@@ -1,4 +1,3 @@
-version: "3.9"
 
 services:
   postgres:
@@ -9,7 +8,7 @@ services:
       POSTGRES_USER: council
       POSTGRES_PASSWORD: council
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - council-data:/var/lib/postgresql/data
     healthcheck:
@@ -30,10 +29,22 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/council
       DB_USERNAME: council
       DB_PASSWORD: council
-      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # ── Final model stack ──
+      NVIDIA_LLAMA_API_KEY: ${NVIDIA_LLAMA_API_KEY:-}
+      NVIDIA_DEEPSEEK_API_KEY: ${NVIDIA_DEEPSEEK_API_KEY:-}
+      OPENROUTER_NEMOTRON_API_KEY: ${OPENROUTER_NEMOTRON_API_KEY:-}
+      OPENROUTER_QWEN_API_KEY: ${OPENROUTER_QWEN_API_KEY:-}
+      DEEPSEEK_R1_API_KEY: ${DEEPSEEK_R1_API_KEY:-}
+      # ── Legacy (disabled but kept for compat) ──
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      KIMI_API_KEY: ${KIMI_API_KEY:-}
+      HUGGINGFACE_API_KEY: ${HUGGINGFACE_API_KEY:-}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
 
 volumes:
   council-data:
-

@@ -13,6 +13,48 @@ spring:
 
 council:
   providers:
+    # ── Active providers (all disabled for unit tests — live test overrides) ──
+    nvidia:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19090
+      model: meta/llama-3.3-70b-instruct
+      timeout-seconds: 5
+      reliability: 0.88
+      max-tokens: 512
+    nvidia-deepseek:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19091
+      model: deepseek-ai/deepseek-v3.2
+      timeout-seconds: 5
+      reliability: 0.85
+      max-tokens: 512
+    openrouter:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19092
+      model: nvidia/llama-3.1-nemotron-70b-instruct
+      timeout-seconds: 5
+      reliability: 0.87
+      max-tokens: 512
+    openrouter-qwen:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19093
+      model: qwen/qwen-2.5-72b-instruct
+      timeout-seconds: 5
+      reliability: 0.83
+      max-tokens: 512
+    deepseek-r1:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19094
+      model: deepseek-reasoner
+      timeout-seconds: 5
+      reliability: 0.90
+      max-tokens: 512
+    # ── Legacy providers (must remain declared so adapters have a config block) ──
     claude:
       enabled: false
       api-key: test-key
@@ -37,12 +79,53 @@ council:
       timeout-seconds: 5
       reliability: 0.75
       max-tokens: 512
+    groq:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19085
+      model: groq-test
+      timeout-seconds: 5
+      reliability: 0.80
+      max-tokens: 512
+    together:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19086
+      model: together-test
+      timeout-seconds: 5
+      reliability: 0.78
+      max-tokens: 512
+    mistral:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19087
+      model: mistral-test
+      timeout-seconds: 5
+      reliability: 0.82
+      max-tokens: 512
+    kimi:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19088
+      model: kimi-test
+      timeout-seconds: 5
+      reliability: 0.78
+      max-tokens: 512
+    huggingface:
+      enabled: false
+      api-key: test-key
+      base-url: http://localhost:19089
+      model: hf-test
+      timeout-seconds: 5
+      reliability: 0.60
+      max-tokens: 512
   critic:
-    provider: claude
+    provider: openrouter
   orchestrator:
     max-retries: 1
     cooldown-minutes: 1
     consecutive-429-threshold: 3
     draft-timeout-seconds: 10
     critic-timeout-seconds: 10
-
+  routing:
+    enabled: false

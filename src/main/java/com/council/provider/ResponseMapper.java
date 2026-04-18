@@ -3,6 +3,7 @@ package com.council.provider;
 import com.council.model.Contradiction;
 import com.council.model.CriticResult;
 import com.council.model.DraftResult;
+import com.council.model.VerifierResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
@@ -55,15 +56,48 @@ public class ResponseMapper {
             }
         }
 
-        return CriticResult.success(
+        // Parse anti-generic quality signals (gracefully default if absent)
+        double mathCorrectnessScore = node.path("mathCorrectnessScore").asDouble(0.0);
+        double feasibilityScore = node.path("feasibilityScore").asDouble(0.0);
+        double failureDepthScore = node.path("failureDepthScore").asDouble(0.0);
+        double genericnessPenalty = node.path("genericnessPenalty").asDouble(0.0);
+        List<String> missingFailureModes = jsonArrayToList(node.path("missingFailureModes"));
+        boolean weakTradeoffAnalysis = node.path("weakTradeoffAnalysis").asBoolean(false);
+        boolean missingMathJustification = node.path("missingMathJustification").asBoolean(false);
+        String winnerRationale = node.path("winnerRationale").asText("");
+
+        return CriticResult.successFull(
                 provider, model,
                 node.path("globalSummary").asText(""),
                 node.path("contradictionSeverity").asDouble(0.0),
                 contradictionCounts, contradictions,
                 jsonArrayToList(node.path("missingPoints")),
                 jsonArrayToList(node.path("riskyClaims")),
+                mathCorrectnessScore,
+                feasibilityScore,
+                failureDepthScore,
+                genericnessPenalty,
+                missingFailureModes,
+                weakTradeoffAnalysis,
+                missingMathJustification,
+                winnerRationale,
                 latencyMs,
                 rawResponse
+        );
+    }
+
+    public VerifierResult mapToVerifierResult(JsonNode node) {
+        String reason = node.path("fatalErrorReason").isNull()
+                ? null
+                : node.path("fatalErrorReason").asText(null);
+        if (reason != null && reason.isBlank()) {
+            reason = null;
+        }
+
+        return new VerifierResult(
+                node.path("containsFatalMathError").asBoolean(false),
+                node.path("containsConsistencyViolation").asBoolean(false),
+                reason
         );
     }
 

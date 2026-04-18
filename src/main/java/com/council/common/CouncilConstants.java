@@ -25,6 +25,7 @@ public final class CouncilConstants {
 
     /* ── Defaults ──────────────────────────────────────────────────── */
     public static final int DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
+    public static final int DEFAULT_READ_TIMEOUT_SECONDS = 60;
     public static final double DEFAULT_RELIABILITY = 0.50;
 }
 

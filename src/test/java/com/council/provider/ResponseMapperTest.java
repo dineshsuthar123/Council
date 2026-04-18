@@ -81,7 +81,15 @@ class ResponseMapperTest {
                     {"draftA": "gemini", "draftB": "deepseek", "issue": "conflicting dates"}
                   ],
                   "missingPoints": ["historical context"],
-                  "riskyClaims": ["unverified stat"]
+                  "riskyClaims": ["unverified stat"],
+                  "mathCorrectnessScore": 0.88,
+                  "feasibilityScore": 0.76,
+                  "failureDepthScore": 0.69,
+                  "genericnessPenalty": 0.25,
+                  "missingFailureModes": ["no dlq handling"],
+                  "weakTradeoffAnalysis": false,
+                  "missingMathJustification": false,
+                  "winnerRationale": "gemini included explicit partition math"
                 }
                 """;
         JsonNode node = objectMapper.readTree(json);
@@ -104,6 +112,11 @@ class ResponseMapperTest {
 
         assertEquals(1, result.missingPoints().size());
         assertEquals(1, result.riskyClaims().size());
+        assertEquals(0.88, result.mathCorrectnessScore(), 0.001);
+        assertEquals(0.76, result.feasibilityScore(), 0.001);
+        assertEquals(0.69, result.failureDepthScore(), 0.001);
+        assertEquals(0.25, result.genericnessPenalty(), 0.001);
+        assertEquals("gemini included explicit partition math", result.winnerRationale());
     }
 
     @Test
@@ -116,7 +129,10 @@ class ResponseMapperTest {
                   "contradictionCountPerDraft": {},
                   "contradictionsFound": [],
                   "missingPoints": [],
-                  "riskyClaims": []
+                  "riskyClaims": [],
+                  "mathCorrectnessScore": 0.0,
+                  "feasibilityScore": 0.0,
+                  "failureDepthScore": 0.0
                 }
                 """;
         JsonNode node = objectMapper.readTree(json);

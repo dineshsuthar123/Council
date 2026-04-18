@@ -21,34 +21,34 @@ public class TraceEntity {
     @Column(name = "trace_id", nullable = false, unique = true)
     private UUID traceId;
 
-    @Column(name = "user_query", nullable = false)
+    @Column(name = "user_query", nullable = false, columnDefinition = "TEXT")
     private String userQuery;
 
-    @Column(name = "draft_results", length = 100_000)
+    @Column(name = "draft_results", columnDefinition = "TEXT")
     private String draftResults;
 
-    @Column(name = "raw_responses", length = 100_000)
+    @Column(name = "raw_responses", columnDefinition = "TEXT")
     private String rawResponses;
 
-    @Column(name = "critic_result", length = 100_000)
+    @Column(name = "critic_result", columnDefinition = "TEXT")
     private String criticResult;
 
-    @Column(name = "judge_result", length = 50_000)
+    @Column(name = "judge_result", columnDefinition = "TEXT")
     private String judgeResult;
 
-    @Column(name = "final_answer", length = 50_000)
+    @Column(name = "final_answer", columnDefinition = "TEXT")
     private String finalAnswer;
 
     @Column(name = "final_confidence")
     private Double finalConfidence;
 
-    @Column(name = "judge_reason", length = 10_000)
+    @Column(name = "judge_reason", columnDefinition = "TEXT")
     private String judgeReason;
 
-    @Column(name = "used_providers", length = 2000)
+    @Column(name = "used_providers", columnDefinition = "TEXT")
     private String usedProviders;
 
-    @Column(name = "failed_providers", length = 2000)
+    @Column(name = "failed_providers", columnDefinition = "TEXT")
     private String failedProviders;
 
     @Column(name = "total_latency_ms")
@@ -58,7 +58,7 @@ public class TraceEntity {
     @Column(name = "status", nullable = false, length = 50)
     private TraceStatus status = TraceStatus.PENDING;
 
-    @Column(name = "error_message", length = 10_000)
+    @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
     @Column(name = "created_at", nullable = false, updatable = false)

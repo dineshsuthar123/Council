@@ -1,8 +1,11 @@
 package com.council.config;
 
+import com.council.provider.routing.ProviderRole;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -14,6 +17,7 @@ public class CouncilProperties {
     private Map<String, ProviderConfig> providers = new HashMap<>();
     private CriticConfig critic = new CriticConfig();
     private OrchestratorConfig orchestrator = new OrchestratorConfig();
+    private RoutingConfig routing = new RoutingConfig();
 
     public Map<String, ProviderConfig> getProviders() { return providers; }
     public void setProviders(Map<String, ProviderConfig> providers) { this.providers = providers; }
@@ -21,6 +25,8 @@ public class CouncilProperties {
     public void setCritic(CriticConfig critic) { this.critic = critic; }
     public OrchestratorConfig getOrchestrator() { return orchestrator; }
     public void setOrchestrator(OrchestratorConfig orchestrator) { this.orchestrator = orchestrator; }
+    public RoutingConfig getRouting() { return routing; }
+    public void setRouting(RoutingConfig routing) { this.routing = routing; }
 
     public static class ProviderConfig {
         private boolean enabled = true;
@@ -77,5 +83,53 @@ public class CouncilProperties {
         public int getCriticTimeoutSeconds() { return criticTimeoutSeconds; }
         public void setCriticTimeoutSeconds(int criticTimeoutSeconds) { this.criticTimeoutSeconds = criticTimeoutSeconds; }
     }
-}
 
+    /**
+     * Routing configuration — controls intelligent provider selection.
+     * When {@code enabled = false}, the system falls back to legacy behaviour
+     * (call all available providers).
+     */
+    public static class RoutingConfig {
+        private boolean enabled = false;
+        private int maxDraftProviders = 3;
+        private int maxEscalationProviders = 1;
+        private double escalationConfidenceThreshold = 0.45;
+        private double escalationContradictionThreshold = 0.70;
+        private Map<String, ProviderRouteConfig> providerRoutes = new HashMap<>();
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getMaxDraftProviders() { return maxDraftProviders; }
+        public void setMaxDraftProviders(int maxDraftProviders) { this.maxDraftProviders = maxDraftProviders; }
+        public int getMaxEscalationProviders() { return maxEscalationProviders; }
+        public void setMaxEscalationProviders(int maxEscalationProviders) { this.maxEscalationProviders = maxEscalationProviders; }
+        public double getEscalationConfidenceThreshold() { return escalationConfidenceThreshold; }
+        public void setEscalationConfidenceThreshold(double v) { this.escalationConfidenceThreshold = v; }
+        public double getEscalationContradictionThreshold() { return escalationContradictionThreshold; }
+        public void setEscalationContradictionThreshold(double v) { this.escalationContradictionThreshold = v; }
+        public Map<String, ProviderRouteConfig> getProviderRoutes() { return providerRoutes; }
+        public void setProviderRoutes(Map<String, ProviderRouteConfig> providerRoutes) { this.providerRoutes = providerRoutes; }
+    }
+
+    /**
+     * Per-provider routing metadata (declared under {@code council.routing.provider-routes.<name>}).
+     */
+    public static class ProviderRouteConfig {
+        private List<ProviderRole> roles = new ArrayList<>();
+        private int priority = 100;
+        private int maxConcurrency = 5;
+        private List<String> fallbackProviders = new ArrayList<>();
+        private String displayName = "";
+
+        public List<ProviderRole> getRoles() { return roles; }
+        public void setRoles(List<ProviderRole> roles) { this.roles = roles; }
+        public int getPriority() { return priority; }
+        public void setPriority(int priority) { this.priority = priority; }
+        public int getMaxConcurrency() { return maxConcurrency; }
+        public void setMaxConcurrency(int maxConcurrency) { this.maxConcurrency = maxConcurrency; }
+        public List<String> getFallbackProviders() { return fallbackProviders; }
+        public void setFallbackProviders(List<String> fallbackProviders) { this.fallbackProviders = fallbackProviders; }
+        public String getDisplayName() { return displayName; }
+        public void setDisplayName(String displayName) { this.displayName = displayName; }
+    }
+}

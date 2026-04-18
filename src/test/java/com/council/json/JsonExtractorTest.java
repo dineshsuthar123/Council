@@ -65,6 +65,20 @@ class JsonExtractorTest {
     }
 
     @Test
+    @DisplayName("Extracts outer JSON object when preamble markdown exists")
+    void extractBetweenOuterBraces_handlesPreamble() {
+        String input = "**Verdict**\n{\"answer\":\"ok\",\"confidence\":0.9}";
+        String result = extractor.extractBetweenOuterBraces(input);
+        assertEquals("{\"answer\":\"ok\",\"confidence\":0.9}", result);
+    }
+
+    @Test
+    @DisplayName("Returns null when no braces exist for outer extraction")
+    void extractBetweenOuterBraces_noBraces() {
+        assertNull(extractor.extractBetweenOuterBraces("no json here"));
+    }
+
+    @Test
     @DisplayName("Returns null when no object found")
     void noObjectReturnsNull() {
         assertNull(extractor.extractJsonObject("no json here"));

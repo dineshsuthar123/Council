@@ -125,6 +125,36 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
         }
     }
 
+    @Override
+    public VerifierResult generateVerification(VerifierRequest request) {
+        long start = System.currentTimeMillis();
+        MDC.put(CouncilConstants.MDC_PROVIDER, provider);
+        MDC.put(CouncilConstants.MDC_TRACE_ID, request.traceId());
+        try {
+            String prompt = PromptTemplates.buildVerifierPrompt(request.userQuery(), request.draft());
+            String rawResponse = callExecutor.execute(provider, () -> callApi(prompt));
+            long latency = System.currentTimeMillis() - start;
+
+            JsonNode node = normalizer.normalizeVerifier(provider, rawResponse);
+            VerifierResult result = responseMapper.mapToVerifierResult(node);
+
+            metrics.recordProviderCall(provider, "SUCCESS", latency);
+            log.info("[{}] Verifier result generated in {}ms", provider, latency);
+            return result;
+
+        } catch (Exception e) {
+            long latency = System.currentTimeMillis() - start;
+            metrics.recordProviderCall(provider, "FAILURE", latency);
+            if (e instanceof JsonNormalizationException) {
+                metrics.recordInvalidJson(provider);
+            }
+            log.warn("[{}] Verification failed after {}ms: {}", provider, latency, e.getMessage());
+            return VerifierResult.internalError(e.getMessage());
+        } finally {
+            MDC.remove(CouncilConstants.MDC_PROVIDER);
+        }
+    }
+
     /* ── subclass hook ─────────────────────────────────────────────── */
 
     /**

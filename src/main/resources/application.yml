@@ -9,7 +9,7 @@ spring:
     virtual:
       enabled: true
   datasource:
-    url: jdbc:postgresql://localhost:5432/council
+    url: jdbc:postgresql://localhost:5433/council
     username: ${DB_USERNAME:council}
     password: ${DB_PASSWORD:council}
     hikari:
@@ -45,6 +45,8 @@ logging:
     console: "%d{ISO8601} [%thread] [requestId=%X{requestId:-}] [traceId=%X{traceId:-}] [provider=%X{provider:-}] %-5level %logger{36} - %msg%n"
   level:
     com.council: INFO
+    # Set to DEBUG to see full HTTP request/response bodies from adapters
+    com.council.provider: DEBUG
 
 # ── OpenAPI / Swagger ──
 springdoc:
@@ -57,32 +59,122 @@ springdoc:
 # ── Council Configuration ──
 council:
   providers:
-    claude:
+    # ── FINAL MODEL STACK ─────────────────────────────────────────────
+    # NVIDIA NIM (via OpenAI-compatible adapter) — meta/llama-3.3-70b-instruct (DRAFT)
+    nvidia:
       enabled: true
+      api-key: ${NVIDIA_LLAMA_API_KEY:}
+      base-url: https://integrate.api.nvidia.com/v1
+      model: meta/llama-3.3-70b-instruct
+      timeout-seconds: 60
+      reliability: 0.88
+      max-tokens: 4096
+    # NVIDIA NIM — deepseek-ai/deepseek-v3.2 (DRAFT)
+    nvidia-deepseek:
+      enabled: false
+      api-key: ${NVIDIA_DEEPSEEK_API_KEY:}
+      base-url: https://integrate.api.nvidia.com/v1
+      model: deepseek-ai/deepseek-v3.2
+      timeout-seconds: 60
+      reliability: 0.85
+      max-tokens: 8192
+    # OpenRouter — nvidia/llama-3.1-nemotron-70b-instruct (CRITIC)
+    openrouter:
+      enabled: true
+      api-key: ${OPENROUTER_NEMOTRON_API_KEY:}
+      base-url: https://openrouter.ai/api
+      model: nvidia/llama-3.1-nemotron-70b-instruct
+      timeout-seconds: 45
+      reliability: 0.87
+      max-tokens: 4096
+    # OpenRouter — qwen/qwen-2.5-72b-instruct (DRAFT)
+    openrouter-qwen:
+      enabled: true
+      api-key: ${OPENROUTER_QWEN_API_KEY:}
+      base-url: https://openrouter.ai/api
+      model: qwen/qwen-2.5-72b-instruct
+      timeout-seconds: 45
+      reliability: 0.83
+      max-tokens: 4096
+    # DeepSeek Official — deepseek-reasoner (R1) — ESCALATION
+    deepseek-r1:
+      enabled: false
+      api-key: ${DEEPSEEK_R1_API_KEY:}
+      base-url: https://api.deepseek.com
+      model: deepseek-reasoner
+      timeout-seconds: 90
+      reliability: 0.90
+      max-tokens: 8192
+    # ── Legacy / Disabled Providers ───────────────────────────────────
+    deepseek:
+      enabled: false
+      api-key: ${DEEPSEEK_API_KEY:}
+      base-url: https://api.deepseek.com
+      model: deepseek-chat
+      timeout-seconds: 30
+      reliability: 0.85
+      max-tokens: 4096
+    groq:
+      enabled: true
+      api-key: ${GROQ_API_KEY:}
+      base-url: https://api.groq.com/openai
+      model: llama-3.3-70b-versatile
+      timeout-seconds: 20
+      reliability: 0.80
+      max-tokens: 4096
+    together:
+      enabled: false
+      api-key: ${TOGETHER_API_KEY:}
+      base-url: https://api.together.xyz
+      model: mistralai/Mixtral-8x22B-Instruct-v0.1
+      timeout-seconds: 30
+      reliability: 0.78
+      max-tokens: 4096
+    mistral:
+      enabled: false
+      api-key: ${MISTRAL_API_KEY:}
+      base-url: https://api.mistral.ai
+      model: mistral-large-latest
+      timeout-seconds: 30
+      reliability: 0.82
+      max-tokens: 4096
+    gemini:
+      enabled: true
+      api-key: ${GEMINI_API_KEY:}
+      base-url: https://generativelanguage.googleapis.com
+      model: gemini-2.5-flash
+      timeout-seconds: 20
+      reliability: 0.92
+      max-tokens: 8192
+    kimi:
+      enabled: false
+      api-key: ${KIMI_API_KEY:}
+      base-url: https://api.moonshot.cn
+      model: moonshot-v1-128k
+      timeout-seconds: 30
+      reliability: 0.78
+      max-tokens: 4096
+    huggingface:
+      enabled: false
+      api-key: ${HUGGINGFACE_API_KEY:}
+      base-url: https://api-inference.huggingface.co
+      model: mistralai/Mistral-7B-Instruct-v0.3
+      timeout-seconds: 45
+      reliability: 0.60
+      max-tokens: 2048
+    claude:
+      enabled: false
       api-key: ${CLAUDE_API_KEY:}
       base-url: https://api.anthropic.com
       model: claude-sonnet-4-20250514
       timeout-seconds: 60
       reliability: 0.90
       max-tokens: 4096
-    gemini:
-      enabled: true
-      api-key: ${GEMINI_API_KEY:}
-      base-url: https://generativelanguage.googleapis.com
-      model: gemini-2.5-pro
-      timeout-seconds: 60
-      reliability: 0.85
-      max-tokens: 4096
-    deepseek:
-      enabled: true
-      api-key: ${DEEPSEEK_API_KEY:}
-      base-url: https://api.deepseek.com
-      model: deepseek-chat
-      timeout-seconds: 60
-      reliability: 0.75
-      max-tokens: 4096
+
+  # Critic → OpenRouter Nemotron
   critic:
-    provider: claude
+    provider: openrouter
+
   orchestrator:
     max-retries: 2
     cooldown-minutes: 15
@@ -90,4 +182,45 @@ council:
     draft-timeout-seconds: 90
     critic-timeout-seconds: 120
 
-
+  # ── Intelligent Routing ──
+  routing:
+    enabled: true
+    max-draft-providers: 3
+    max-escalation-providers: 1
+    escalation-confidence-threshold: 0.45
+    escalation-contradiction-threshold: 0.70
+    provider-routes:
+      # Tier A — NVIDIA DRAFT workhorses (priority 1-2)
+      nvidia:
+        display-name: NVIDIA Llama-3.3-70B
+        roles: [DRAFT]
+        priority: 1
+        max-concurrency: 2
+        fallback-providers: [groq, openrouter-qwen]
+      groq:
+        display-name: Groq Llama-3.3
+        roles: [DRAFT]
+        priority: 2
+        max-concurrency: 2
+        fallback-providers: [nvidia, openrouter-qwen]
+      # Tier A — OpenRouter Qwen DRAFT (priority 3)
+      openrouter-qwen:
+        display-name: OpenRouter Qwen-2.5-72B
+        roles: [DRAFT]
+        priority: 3
+        max-concurrency: 2
+        fallback-providers: [nvidia, groq]
+      # Tier B — OpenRouter Nemotron CRITIC (priority 10)
+      openrouter:
+        display-name: OpenRouter Nemotron-70B (Critic)
+        roles: [CRITIC, BASELINE]
+        priority: 10
+        max-concurrency: 1
+        fallback-providers: [nvidia]
+      # Tier B — Gemini ESCALATION (priority 11)
+      gemini:
+        display-name: Gemini (Escalation)
+        roles: [PREMIUM_ESCALATION]
+        priority: 11
+        max-concurrency: 1
+        fallback-providers: [openrouter]

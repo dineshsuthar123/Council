@@ -56,9 +56,12 @@ public class GeminiAdapter extends AbstractLlmAdapter {
             throw new ProviderException(PROVIDER, "Gemini adapter is not configured");
         }
         try {
+            String jsonOnlyInstruction = "You must output raw, unformatted JSON. Do NOT wrap your response in markdown blocks like ```json.";
+            String geminiPrompt = jsonOnlyInstruction + "\n\n" + prompt;
+
             Map<String, Object> body = Map.of(
                     "contents", List.of(
-                            Map.of("parts", List.of(Map.of("text", prompt)))
+                    Map.of("parts", List.of(Map.of("text", geminiPrompt)))
                     ),
                     "generationConfig", Map.of(
                             "responseMimeType", "application/json",

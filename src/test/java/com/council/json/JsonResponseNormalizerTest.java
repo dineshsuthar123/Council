@@ -125,7 +125,10 @@ class JsonResponseNormalizerTest {
                         { "draftA": "gemini", "draftB": "deepseek", "issue": "different dates" }
                       ],
                       "missingPoints": ["context"],
-                      "riskyClaims": ["unverified stat"]
+                                            "riskyClaims": ["unverified stat"],
+                                            "mathCorrectnessScore": 0.88,
+                                            "feasibilityScore": 0.77,
+                                            "failureDepthScore": 0.66
                     }
                     """;
             JsonNode node = normalizer.normalizeCritic("test", raw);
@@ -133,6 +136,31 @@ class JsonResponseNormalizerTest {
             assertEquals(0.3, node.get("contradictionSeverity").asDouble(), 0.001);
             assertEquals(1, node.get("contradictionCountPerDraft").get("gemini").asInt());
         }
+
+                @Test
+                @DisplayName("Extracts and parses critic JSON when markdown preamble exists")
+                void parsesCriticWithMarkdownPreamble() {
+                        String raw = """
+                                        **Verdict**
+                                        {
+                                            "globalSummary": "Draft A is stronger",
+                                            "contradictionSeverity": 0.3,
+                                            "contradictionCountPerDraft": { "gemini": 1, "deepseek": 2 },
+                                            "contradictionsFound": [
+                                                { "draftA": "gemini", "draftB": "deepseek", "issue": "different dates" }
+                                            ],
+                                            "missingPoints": ["context"],
+                                            "riskyClaims": ["unverified stat"],
+                                            "mathCorrectnessScore": 0.88,
+                                            "feasibilityScore": 0.77,
+                                            "failureDepthScore": 0.66
+                                        }
+                                        """;
+
+                        JsonNode node = normalizer.normalizeCritic("test", raw);
+                        assertEquals("Draft A is stronger", node.get("globalSummary").asText());
+                        assertEquals(0.88, node.get("mathCorrectnessScore").asDouble(), 0.001);
+                }
     }
 }
 

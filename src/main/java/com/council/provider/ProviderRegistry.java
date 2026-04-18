@@ -1,6 +1,11 @@
 package com.council.provider;
 
+import com.council.config.CouncilProperties;
+import com.council.provider.routing.ProviderConcurrencyLimiter;
+import com.council.provider.routing.ProviderDescriptor;
+import com.council.provider.routing.ProviderRole;
 import com.council.resilience.ProviderCircuitBreaker;
+import com.council.resilience.ProviderCooldownState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -14,6 +19,9 @@ import java.util.stream.Collectors;
 /**
  * Central registry of all available {@link LlmAdapter} beans.
  * Filters by enabled status and cooldown state before returning adapters.
+ * <p>
+ * When routing is enabled, also builds {@link ProviderDescriptor} snapshots
+ * that merge static config with live runtime state.
  */
 @Component
 public class ProviderRegistry {
@@ -22,16 +30,31 @@ public class ProviderRegistry {
 
     private final Map<String, LlmAdapter> adapters;
     private final ProviderCircuitBreaker circuitBreaker;
+    private final CouncilProperties properties;
+    private final ProviderConcurrencyLimiter concurrencyLimiter;
 
-    public ProviderRegistry(List<LlmAdapter> adapterList, ProviderCircuitBreaker circuitBreaker) {
+    public ProviderRegistry(List<LlmAdapter> adapterList,
+                            ProviderCircuitBreaker circuitBreaker,
+                            CouncilProperties properties,
+                            ProviderConcurrencyLimiter concurrencyLimiter) {
         this.adapters = adapterList.stream()
                 .collect(Collectors.toMap(LlmAdapter::providerName, Function.identity()));
         this.circuitBreaker = circuitBreaker;
+        this.properties = properties;
+        this.concurrencyLimiter = concurrencyLimiter;
+
+        // Register concurrency limits from routing config
+        if (properties.getRouting().isEnabled()) {
+            properties.getRouting().getProviderRoutes().forEach((name, route) ->
+                    concurrencyLimiter.register(name, route.getMaxConcurrency()));
+        }
+
         log.info("Registered {} provider adapters: {}", adapters.size(), adapters.keySet());
     }
 
     /**
      * All enabled providers not currently in cooldown.
+     * This is the legacy method used when routing is disabled.
      */
     public List<LlmAdapter> getAvailableDraftProviders() {
         return adapters.values().stream()
@@ -61,5 +84,50 @@ public class ProviderRegistry {
     public Map<String, LlmAdapter> getAllAdapters() {
         return Map.copyOf(adapters);
     }
-}
 
+    /**
+     * Whether intelligent routing is enabled.
+     */
+    public boolean isRoutingEnabled() {
+        return properties.getRouting().isEnabled();
+    }
+
+    /**
+     * Build live {@link ProviderDescriptor} snapshots for every registered provider.
+     * Merges static config from {@link CouncilProperties} with live circuit-breaker state.
+     */
+    public List<ProviderDescriptor> buildDescriptors() {
+        CouncilProperties.RoutingConfig routing = properties.getRouting();
+        Map<String, CouncilProperties.ProviderRouteConfig> routes = routing.getProviderRoutes();
+
+        return adapters.entrySet().stream()
+                .map(entry -> {
+                    String name = entry.getKey();
+                    LlmAdapter adapter = entry.getValue();
+                    CouncilProperties.ProviderConfig providerConfig =
+                            properties.getProviders().getOrDefault(name, new CouncilProperties.ProviderConfig());
+                    CouncilProperties.ProviderRouteConfig routeConfig =
+                            routes.getOrDefault(name, new CouncilProperties.ProviderRouteConfig());
+
+                    ProviderCooldownState cooldownState = circuitBreaker.getState(name);
+
+                    return new ProviderDescriptor(
+                            name,
+                            routeConfig.getDisplayName().isEmpty() ? name : routeConfig.getDisplayName(),
+                            adapter.modelName(),
+                            adapter.isEnabled(),
+                            routeConfig.getRoles().isEmpty()
+                                    ? List.of(ProviderRole.DRAFT)
+                                    : routeConfig.getRoles(),
+                            routeConfig.getPriority(),
+                            providerConfig.getReliability(),
+                            providerConfig.getTimeoutSeconds(),
+                            routeConfig.getMaxConcurrency(),
+                            routeConfig.getFallbackProviders(),
+                            cooldownState.isInCooldown(),
+                            cooldownState.getRecentFailureRate()
+                    );
+                })
+                .toList();
+    }
+}

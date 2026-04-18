@@ -4,9 +4,10 @@ import com.council.api.dto.ErrorResponse;
 import com.council.api.dto.ProviderStatusResponse;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
+import com.council.provider.routing.ProviderConcurrencyLimiter;
+import com.council.provider.routing.ProviderDescriptor;
 import com.council.resilience.ProviderCircuitBreaker;
 import com.council.resilience.ProviderCooldownState;
-import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +18,8 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Operational endpoints: health status, custom metrics summary, and provider status.
@@ -30,35 +33,68 @@ public class HealthController {
 
     private final ProviderRegistry registry;
     private final ProviderCircuitBreaker circuitBreaker;
+    private final ProviderConcurrencyLimiter concurrencyLimiter;
 
     public HealthController(ProviderRegistry registry,
-                            ProviderCircuitBreaker circuitBreaker) {
+                            ProviderCircuitBreaker circuitBreaker,
+                            ProviderConcurrencyLimiter concurrencyLimiter) {
         this.registry = registry;
         this.circuitBreaker = circuitBreaker;
+        this.concurrencyLimiter = concurrencyLimiter;
     }
 
     /* ── GET /providers/status ─────────────────────────────────────── */
 
     @GetMapping("/providers/status")
     public ResponseEntity<List<ProviderStatusResponse>> providerStatus() {
+        // Build descriptor map for routing metadata (if routing enabled)
+        Map<String, ProviderDescriptor> descriptorMap = registry.isRoutingEnabled()
+                ? registry.buildDescriptors().stream()
+                    .collect(Collectors.toMap(ProviderDescriptor::name, Function.identity()))
+                : Map.of();
+
         List<ProviderStatusResponse> statuses = registry.getAllAdapters().entrySet().stream()
                 .map(entry -> {
                     String name = entry.getKey();
                     LlmAdapter adapter = entry.getValue();
                     ProviderCooldownState state = circuitBreaker.getState(name);
-                    return new ProviderStatusResponse(
-                            name,
-                            adapter.modelName(),
-                            adapter.isEnabled(),
-                            state.isInCooldown(),
-                            formatInstant(state.getCooldownUntil()),
-                            state.getConsecutive429Count(),
-                            state.getRecentFailureRate(),
-                            state.getTotalSuccesses(),
-                            state.getTotalFailures(),
-                            formatInstant(state.getLastSuccessAt()),
-                            formatInstant(state.getLastFailureAt())
-                    );
+                    ProviderDescriptor desc = descriptorMap.get(name);
+
+                    if (desc != null) {
+                        return new ProviderStatusResponse(
+                                name,
+                                adapter.modelName(),
+                                adapter.isEnabled(),
+                                state.isInCooldown(),
+                                formatInstant(state.getCooldownUntil()),
+                                state.getConsecutive429Count(),
+                                state.getRecentFailureRate(),
+                                state.getTotalSuccesses(),
+                                state.getTotalFailures(),
+                                formatInstant(state.getLastSuccessAt()),
+                                formatInstant(state.getLastFailureAt()),
+                                desc.roles().stream().map(Enum::name).toList(),
+                                desc.priority(),
+                                desc.maxConcurrency(),
+                                concurrencyLimiter.availablePermits(name),
+                                desc.fallbackProviders(),
+                                desc.isAvailableForRouting()
+                        );
+                    } else {
+                        return new ProviderStatusResponse(
+                                name,
+                                adapter.modelName(),
+                                adapter.isEnabled(),
+                                state.isInCooldown(),
+                                formatInstant(state.getCooldownUntil()),
+                                state.getConsecutive429Count(),
+                                state.getRecentFailureRate(),
+                                state.getTotalSuccesses(),
+                                state.getTotalFailures(),
+                                formatInstant(state.getLastSuccessAt()),
+                                formatInstant(state.getLastFailureAt())
+                        );
+                    }
                 })
                 .toList();
         return ResponseEntity.ok(statuses);
@@ -72,6 +108,7 @@ public class HealthController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", available.isEmpty() ? "DEGRADED" : "UP");
         body.put("availableProviders", available.stream().map(LlmAdapter::providerName).toList());
+        body.put("routingEnabled", registry.isRoutingEnabled());
 
         Map<String, Object> cooldowns = new LinkedHashMap<>();
         circuitBreaker.getAllStates().forEach((name, state) -> {

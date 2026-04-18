@@ -109,7 +109,10 @@ class SchemaValidatorTest {
                         "contradictionCountPerDraft": {"gemini": 0},
                         "contradictionsFound": [],
                         "missingPoints": [],
-                        "riskyClaims": ["claim about future"]
+                        "riskyClaims": ["claim about future"],
+                        "mathCorrectnessScore": 0.84,
+                        "feasibilityScore": 0.79,
+                        "failureDepthScore": 0.71
                     }
                     """);
             List<String> errors = validator.validateCritic(node);
@@ -134,13 +137,19 @@ class SchemaValidatorTest {
                         "contradictionCountPerDraft": [],
                         "contradictionsFound": "none",
                         "missingPoints": "none",
-                        "riskyClaims": "none"
+                        "riskyClaims": "none",
+                        "mathCorrectnessScore": "bad",
+                        "feasibilityScore": "bad",
+                        "failureDepthScore": "bad"
                     }
                     """);
             List<String> errors = validator.validateCritic(node);
             assertTrue(errors.stream().anyMatch(e -> e.contains("globalSummary must be a string")));
             assertTrue(errors.stream().anyMatch(e -> e.contains("contradictionSeverity must be a number")));
             assertTrue(errors.stream().anyMatch(e -> e.contains("contradictionCountPerDraft must be an object")));
+            assertTrue(errors.stream().anyMatch(e -> e.contains("mathCorrectnessScore must be a number")));
+            assertTrue(errors.stream().anyMatch(e -> e.contains("feasibilityScore must be a number")));
+            assertTrue(errors.stream().anyMatch(e -> e.contains("failureDepthScore must be a number")));
         }
     }
 }

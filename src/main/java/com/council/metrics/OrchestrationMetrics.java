@@ -25,6 +25,7 @@ public class OrchestrationMetrics {
     private final Counter rateLimitCounter;
     private final Counter cooldownCounter;
     private final Counter invalidJsonCounter;
+    private final Counter escalationCounter;
     private final Timer totalLatencyTimer;
     private final Timer criticLatencyTimer;
 
@@ -35,6 +36,7 @@ public class OrchestrationMetrics {
         this.rateLimitCounter    = Counter.builder("council.rate_limits.total").register(registry);
         this.cooldownCounter     = Counter.builder("council.cooldowns.total").register(registry);
         this.invalidJsonCounter  = Counter.builder("council.invalid_json.total").register(registry);
+        this.escalationCounter   = Counter.builder("council.routing.escalations.total").register(registry);
         this.totalLatencyTimer   = Timer.builder("council.request.latency").register(registry);
         this.criticLatencyTimer  = Timer.builder("council.critic.latency").register(registry);
     }
@@ -94,5 +96,25 @@ public class OrchestrationMetrics {
     public void recordTotalLatency(long latencyMs) {
         totalLatencyTimer.record(Duration.ofMillis(latencyMs));
     }
-}
 
+    /* ── Routing-specific metrics ──────────────────────────────────── */
+
+    public void recordEscalation() {
+        escalationCounter.increment();
+    }
+
+    public void recordConcurrencyRejection(String provider) {
+        Counter.builder("council.routing.concurrency.rejected")
+                .tag("provider", provider)
+                .register(registry)
+                .increment();
+    }
+
+    public void recordRoutingSelection(String provider, String role) {
+        Counter.builder("council.routing.selection")
+                .tag("provider", provider)
+                .tag("role", role)
+                .register(registry)
+                .increment();
+    }
+}

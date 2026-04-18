@@ -6,6 +6,7 @@ import com.council.model.CriticResult;
 import com.council.model.DraftResult;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
+import com.council.provider.routing.ProviderSelectionStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,13 +29,17 @@ class CriticEngineTest {
         registry = mock(ProviderRegistry.class);
         properties = new CouncilProperties();
         properties.getCritic().setProvider("claude");
-        criticEngine = new CriticEngine(registry, properties);
+        // Routing disabled — uses legacy getCriticAdapter
+        when(registry.isRoutingEnabled()).thenReturn(false);
+        ProviderSelectionStrategy strategy = mock(ProviderSelectionStrategy.class);
+        criticEngine = new CriticEngine(registry, properties, strategy);
     }
 
     @Test
-    @DisplayName("Returns failure when no critic provider is available")
+    @DisplayName("Returns failure when no critic provider is available and fallbacks exhausted")
     void noCriticProvider_returnsFailure() {
         when(registry.getCriticAdapter("claude")).thenReturn(Optional.empty());
+        when(registry.getAllAdapters()).thenReturn(Map.of()); // no fallback adapters
 
         List<DraftResult> drafts = List.of(
                 DraftResult.success("gemini", "model", "ans", "sum",
@@ -45,7 +50,7 @@ class CriticEngineTest {
         CriticResult result = criticEngine.critique(request);
 
         assertFalse(result.isSuccess());
-        assertTrue(result.errorMessage().contains("No critic provider available"));
+        assertTrue(result.errorMessage().contains("All critic providers failed"));
     }
 
     @Test

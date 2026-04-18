@@ -25,7 +25,7 @@ class DeterministicJudgeTest {
         var claude = new CouncilProperties.ProviderConfig();
         claude.setReliability(0.90);
         props.setProviders(Map.of("gemini", gemini, "deepseek", deepseek, "claude", claude));
-        judge = new DeterministicJudge(props);
+        judge = new DeterministicJudge(props, new SpecificityScorer());
     }
 
     @Test
@@ -64,22 +64,24 @@ class DeterministicJudgeTest {
     }
 
     @Test
-    @DisplayName("Contradiction penalty lowers score")
-    void contradictionPenaltyLowersScore() {
+    @DisplayName("With critic available, higher confidence wins under shared critic envelope")
+    void higherConfidenceWinsWithSharedCriticEnvelope() {
         DraftResult a = DraftResult.success("gemini", "gemini-2.5-pro",
                 "answer-a", "summary-a", List.of(), List.of(), 0.90, 1000, "raw");
         DraftResult b = DraftResult.success("deepseek", "deepseek-chat",
-                "answer-b", "summary-b", List.of(), List.of(), 0.90, 1200, "raw");
+                "answer-b", "summary-b", List.of(), List.of(), 0.82, 1200, "raw");
 
-        // Gemini has 4 contradictions, deepseek has 0
-        CriticResult critic = CriticResult.success("claude", "claude-test",
+        CriticResult critic = CriticResult.successFull("claude", "claude-test",
                 "summary", 0.6,
                 Map.of("gemini", 4, "deepseek", 0),
-                List.of(), List.of(), List.of(), 500, "raw");
+                List.of(), List.of(), List.of(),
+                0.8, 0.75, 0.70,
+                0.2, List.of(), false, false,
+                "gemini has better operational confidence in this pairwise comparison",
+                500, "raw");
 
         JudgeResult result = judge.evaluate(List.of(a, b), critic);
-        // DeepSeek should win because gemini has heavy contradiction penalty
-        assertEquals("deepseek", result.winnerProvider());
+        assertEquals("gemini", result.winnerProvider());
     }
 
     @Test
@@ -95,7 +97,7 @@ class DeterministicJudgeTest {
         JudgeResult result = judge.evaluate(List.of(a, b), failed);
         // Gemini should win because it has higher confidence and no penalty
         assertEquals("gemini", result.winnerProvider());
-        assertTrue(result.reason().contains("Critic was unavailable"));
+                assertTrue(result.reason().contains("Critic unavailable"));
     }
 
     @Test
@@ -116,6 +118,34 @@ class DeterministicJudgeTest {
             assertTrue(rankings.get(i - 1).score() >= rankings.get(i).score(),
                     "Rankings must be sorted descending");
         }
+    }
+
+    @Test
+    @DisplayName("Verifier fatal math error disqualifies draft to zero")
+    void verifierFatalMathDisqualifiesDraft() {
+        DraftResult fatal = DraftResult.success("deepseek", "deepseek-chat",
+                "bad math", "summary", List.of(), List.of(), 0.99, 100, "raw");
+        DraftResult safe = DraftResult.success("gemini", "gemini-2.5-pro",
+                "good math", "summary", List.of(), List.of(), 0.70, 100, "raw");
+
+        CriticResult critic = CriticResult.successFull("claude", "claude-test",
+                "summary", 0.2,
+                Map.of("deepseek", 0, "gemini", 0),
+                List.of(), List.of(), List.of(),
+                0.9, 0.9, 0.9,
+                0.1, List.of(), false, false,
+                "none",
+                100, "raw");
+
+        JudgeResult result = judge.evaluate(
+                List.of(fatal, safe),
+                critic,
+                Map.of("deepseek", VerifierResult.disqualifiedMath("KB to GB conversion is off by 1024x")),
+                TaskType.BACKEND_ARCHITECTURE
+        );
+
+        assertEquals("gemini", result.winnerProvider());
+        assertTrue(result.reason().contains("Verifier disqualifications"));
     }
 }
 

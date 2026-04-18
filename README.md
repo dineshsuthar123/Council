@@ -229,6 +229,8 @@ src/main/java/com/council/
 ├── common/                 # Constants, utils, enums, exceptions
 ├── config/                 # Spring configuration, properties
 ├── critic/                 # Critic engine
+├── evaluation/             # Benchmarking & evaluation layer
+│   └── dto/                # Evaluation request/response DTOs
 ├── json/                   # JSON normalization pipeline
 ├── judge/                  # Deterministic scoring judge
 ├── metrics/                # Micrometer metrics facade
@@ -245,5 +247,6 @@ src/main/java/com/council/
 
 
 
-#   C o u n c i l  
+#   C o u n c i l 
+ 
  

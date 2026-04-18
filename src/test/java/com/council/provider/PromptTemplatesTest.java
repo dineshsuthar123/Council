@@ -22,6 +22,9 @@ class PromptTemplatesTest {
         assertTrue(prompt.contains("\"uncertainties\""));
         assertTrue(prompt.contains("\"confidence\""));
         assertTrue(prompt.contains("STRICT JSON"));
+        assertTrue(prompt.contains("PRINCIPAL ENGINEER CONSTRAINTS"));
+        assertTrue(prompt.contains("FINANCIAL INTEGRITY"));
+        assertTrue(prompt.contains("PRODUCTION MATH"));
     }
 
     @Test
@@ -48,6 +51,10 @@ class PromptTemplatesTest {
         assertTrue(prompt.contains("\"contradictionsFound\""));
         assertTrue(prompt.contains("\"missingPoints\""));
         assertTrue(prompt.contains("\"riskyClaims\""));
+        assertTrue(prompt.contains("\"mathCorrectnessScore\""));
+        assertTrue(prompt.contains("\"feasibilityScore\""));
+        assertTrue(prompt.contains("\"failureDepthScore\""));
+        assertTrue(prompt.contains("CRITICAL: YOU MUST OUTPUT ONLY VALID JSON"));
         assertTrue(prompt.contains("critic"));
     }
 
@@ -69,6 +76,21 @@ class PromptTemplatesTest {
         String prompt = PromptTemplates.buildDraftPrompt("test");
         assertTrue(prompt.contains("0.0"));
         assertTrue(prompt.contains("1.0"));
+    }
+
+    @Test
+    @DisplayName("Verifier prompt contains strict math and consistency checks")
+    void buildVerifierPrompt_containsStrictChecks() {
+        DraftResult draft = DraftResult.success("deepseek", "deepseek-chat",
+                "4,000,000,000 KB = 4 GB", "summary", List.of(), List.of(), 0.9, 100, "raw");
+
+        String prompt = PromptTemplates.buildVerifierPrompt("Validate this architecture", draft);
+
+        assertTrue(prompt.contains("You are a mathematical calculator and constraint verifier"));
+        assertTrue(prompt.contains("containsFatalMathError"));
+        assertTrue(prompt.contains("containsConsistencyViolation"));
+        assertTrue(prompt.contains("fatalErrorReason"));
+        assertTrue(prompt.contains("Cassandra/MongoDB"));
     }
 }
 

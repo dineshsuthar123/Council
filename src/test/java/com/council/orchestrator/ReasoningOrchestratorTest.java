@@ -4,11 +4,16 @@ import com.council.api.dto.FinalResponse;
 import com.council.config.CouncilProperties;
 import com.council.critic.CriticEngine;
 import com.council.judge.DeterministicJudge;
+import com.council.judge.PromptClassifier;
+import com.council.judge.SpecificityScorer;
 import com.council.metrics.OrchestrationMetrics;
 import com.council.model.*;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
+import com.council.provider.routing.ProviderConcurrencyLimiter;
+import com.council.provider.routing.ProviderSelectionStrategy;
 import com.council.trace.TraceService;
+import com.council.verifier.VerifierEngine;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +30,7 @@ class ReasoningOrchestratorTest {
 
     private ProviderRegistry registry;
     private CriticEngine criticEngine;
+        private VerifierEngine verifierEngine;
     private DeterministicJudge judge;
     private TraceService traceService;
     private OrchestrationMetrics metrics;
@@ -34,6 +40,7 @@ class ReasoningOrchestratorTest {
     void setUp() {
         registry = mock(ProviderRegistry.class);
         criticEngine = mock(CriticEngine.class);
+        verifierEngine = mock(VerifierEngine.class);
         traceService = mock(TraceService.class);
         metrics = new OrchestrationMetrics(new SimpleMeterRegistry());
 
@@ -47,10 +54,17 @@ class ReasoningOrchestratorTest {
         props.setProviders(Map.of("gemini", gemini, "deepseek", deepseek, "claude", claude));
         props.getOrchestrator().setDraftTimeoutSeconds(5);
         props.getOrchestrator().setCriticTimeoutSeconds(5);
+        // Routing disabled for legacy tests
+        props.getRouting().setEnabled(false);
 
-        judge = new DeterministicJudge(props);
-        orchestrator = new ReasoningOrchestrator(registry, criticEngine, judge,
-                traceService, metrics, props);
+        ProviderSelectionStrategy selectionStrategy = mock(ProviderSelectionStrategy.class);
+        ProviderConcurrencyLimiter concurrencyLimiter = new ProviderConcurrencyLimiter();
+
+        judge = new DeterministicJudge(props, new SpecificityScorer());
+        when(verifierEngine.verifyDraft(any())).thenReturn(VerifierResult.passed());
+
+        orchestrator = new ReasoningOrchestrator(registry, criticEngine, verifierEngine, judge,
+                new PromptClassifier(), traceService, metrics, props, selectionStrategy, concurrencyLimiter);
     }
 
     /* ── Happy path: all providers succeed ─────────────────────────── */
@@ -147,6 +161,8 @@ class ReasoningOrchestratorTest {
         assertNull(response.finalAnswer());
         assertTrue(response.judgeReason().contains("All providers failed"));
         assertEquals(0.0, response.confidence());
+        assertEquals(List.of("gemini", "deepseek"), response.failedProviders());
+        assertTrue(response.usedProviders().isEmpty());
     }
 
     /* ── No providers available ────────────────────────────────────── */
