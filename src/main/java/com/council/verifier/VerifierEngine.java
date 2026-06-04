@@ -1,7 +1,8 @@
 package com.council.verifier;
 
-import com.council.model.VerifierRequest;
-import com.council.model.VerifierResult;
+import com.council.model.DraftResult;
+import com.council.model.VerifierBatchRequest;
+import com.council.model.VerifierBatchResult;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
 import org.slf4j.Logger;
@@ -12,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Runs a strict math/consistency verification pass for each draft.
+ * Runs a strict batch verifier pass over all successful drafts in one API call.
  *
  * The verifier is intentionally routed to models with stronger logical consistency.
  */
@@ -24,7 +25,10 @@ public class VerifierEngine {
     private static final List<String> VERIFIER_PROVIDER_CHAIN = List.of(
             "openrouter-qwen", // qwen-2.5-72b
             "nvidia-deepseek", // deepseek-v3.x via NVIDIA
-            "deepseek"
+            "deepseek",
+            "groq",
+            "gemini",
+            "nvidia"
     );
 
     private final ProviderRegistry registry;
@@ -34,9 +38,15 @@ public class VerifierEngine {
     }
 
     /**
-     * Verify a single draft. Fail-open: verifier transport failures do not disqualify drafts.
+     * Verify all successful drafts in one batch call.
+     * Fail-open: verifier transport failures do not disqualify drafts.
      */
-    public VerifierResult verifyDraft(VerifierRequest request) {
+    public VerifierBatchResult verify(String traceId, String userQuery, List<DraftResult> drafts) {
+        if (drafts == null || drafts.isEmpty()) {
+            return VerifierBatchResult.success(Map.of());
+        }
+
+        VerifierBatchRequest request = new VerifierBatchRequest(traceId, userQuery, drafts);
         Map<String, LlmAdapter> adapters = registry.getAllAdapters();
 
         for (String providerName : VERIFIER_PROVIDER_CHAIN) {
@@ -45,8 +55,9 @@ public class VerifierEngine {
                 continue;
             }
 
-            log.info("[verifier] Using provider '{}' model '{}'", adapter.providerName(), adapter.modelName());
-            VerifierResult result = adapter.generateVerification(request);
+            log.info("[verifier] Using provider '{}' model '{}' for batch verification",
+                    adapter.providerName(), adapter.modelName());
+            VerifierBatchResult result = adapter.generateBatchVerification(request);
             if (result == null) {
                 continue;
             }
@@ -55,10 +66,10 @@ public class VerifierEngine {
             }
 
             log.warn("[verifier] Provider '{}' failed: {}",
-                    adapter.providerName(), result.fatalErrorReason());
+                    adapter.providerName(), result.internalErrorReason());
         }
 
-        log.warn("[verifier] No verifier provider succeeded; proceeding without disqualification");
-        return VerifierResult.passed();
+        log.warn("[verifier] No verifier provider succeeded; proceeding without disqualification for all drafts");
+        return VerifierBatchResult.passedFor(drafts);
     }
 }

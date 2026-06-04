@@ -121,8 +121,8 @@ class DeterministicJudgeTest {
     }
 
     @Test
-    @DisplayName("Verifier fatal math error disqualifies draft to zero")
-    void verifierFatalMathDisqualifiesDraft() {
+    @DisplayName("Verifier fatal throughput contradiction disqualifies draft to zero")
+    void verifierThroughputDisqualifiesDraft() {
         DraftResult fatal = DraftResult.success("deepseek", "deepseek-chat",
                 "bad math", "summary", List.of(), List.of(), 0.99, 100, "raw");
         DraftResult safe = DraftResult.success("gemini", "gemini-2.5-pro",
@@ -140,12 +140,16 @@ class DeterministicJudgeTest {
         JudgeResult result = judge.evaluate(
                 List.of(fatal, safe),
                 critic,
-                Map.of("deepseek", VerifierResult.disqualifiedMath("KB to GB conversion is off by 1024x")),
+                VerifierBatchResult.success(Map.of(
+                        "deepseek", VerifierVerdict.disqualifiedThroughput(
+                                "Input rate exceeds processing capacity by 25x")
+                )),
                 TaskType.BACKEND_ARCHITECTURE
         );
 
         assertEquals("gemini", result.winnerProvider());
         assertTrue(result.reason().contains("Verifier disqualifications"));
+        assertTrue(result.reason().contains("processing capacity"));
     }
 }
 

@@ -16,7 +16,8 @@ import java.util.Map;
 @Component
 public class RestClientFactory {
 
-    private static final Duration HARD_READ_TIMEOUT = Duration.ofSeconds(45);
+    private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(45);
+    private static final Duration MAX_READ_TIMEOUT = Duration.ofSeconds(120);
     private static final Duration HARD_CONNECT_TIMEOUT = Duration.ofSeconds(10);
 
     /**
@@ -27,12 +28,13 @@ public class RestClientFactory {
      * @param defaultHeaders headers added to every request (may be empty)
      */
     public RestClient create(String baseUrl, int timeoutSeconds, Map<String, String> defaultHeaders) {
+        Duration readTimeout = resolveReadTimeout(timeoutSeconds);
         HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(HARD_CONNECT_TIMEOUT)
             .build();
 
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(HARD_READ_TIMEOUT);
+        requestFactory.setReadTimeout(readTimeout);
 
         RestClient.Builder builder = RestClient.builder()
                 .baseUrl(baseUrl)
@@ -43,6 +45,14 @@ public class RestClientFactory {
         }
 
         return builder.build();
+    }
+
+    private Duration resolveReadTimeout(int timeoutSeconds) {
+        if (timeoutSeconds <= 0) {
+            return DEFAULT_READ_TIMEOUT;
+        }
+        Duration configured = Duration.ofSeconds(timeoutSeconds);
+        return configured.compareTo(MAX_READ_TIMEOUT) > 0 ? MAX_READ_TIMEOUT : configured;
     }
 }
 

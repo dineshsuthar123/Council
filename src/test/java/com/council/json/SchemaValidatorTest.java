@@ -152,5 +152,303 @@ class SchemaValidatorTest {
             assertTrue(errors.stream().anyMatch(e -> e.contains("failureDepthScore must be a number")));
         }
     }
+
+    @Nested
+    @DisplayName("Verifier batch validation")
+    class VerifierBatchTests {
+
+        @Test
+        @DisplayName("Valid verifier batch passes validation")
+        void validVerifierBatch() throws Exception {
+            JsonNode node = mapper.readTree("""
+                    {
+                      "verdicts": {
+                        "deepseek": {
+                                                    "valid": false,
+                                                    "fatal": true,
+                                                    "math": {
+                                                        "steps": [
+                                                            {
+                                                                "op": "multiply",
+                                                                "a": 50000,
+                                                                "b": 86400,
+                                                                "result": 123,
+                                                                "ok": false
+                                                            }
+                                                        ],
+                                                        "allOk": false
+                                                    },
+                                                    "consistency": {
+                                                        "throughputValid": false,
+                                                        "storageValid": true,
+                                                        "latencyValid": true
+                                                    },
+                                                    "errors": ["Input rate exceeds processing capacity"]
+                        },
+                        "gemini": {
+                                                    "valid": true,
+                                                    "fatal": false,
+                                                    "math": {
+                                                                                                            "steps": [
+                                                                                                                {
+                                                                                                                    "op": "add",
+                                                                                                                    "a": 1000,
+                                                                                                                    "b": 2000,
+                                                                                                                    "result": 3000,
+                                                                                                                    "ok": true
+                                                                                                                }
+                                                                                                            ],
+                                                                                                            "allOk": true
+                                                    },
+                                                    "consistency": {
+                                                        "throughputValid": true,
+                                                        "storageValid": true,
+                                                        "latencyValid": true
+                                                    },
+                                                    "errors": []
+                        }
+                      }
+                    }
+                    """);
+
+            List<String> errors = validator.validateVerifierBatch(node);
+            assertTrue(errors.isEmpty(), "Expected no errors but got: " + errors);
+        }
+
+        @Test
+                @DisplayName("Missing consistency field fails verifier batch validation")
+                void missingConsistencyFieldFails() throws Exception {
+            JsonNode node = mapper.readTree("""
+                    {
+                      "verdicts": {
+                        "deepseek": {
+                                                    "valid": false,
+                                                    "fatal": false,
+                                                    "math": {
+                                                        "steps": [],
+                                                        "allOk": false
+                                                    },
+                                                    "consistency": {
+                                                        "storageValid": true,
+                                                        "latencyValid": true
+                                                    },
+                                                    "errors": ["missing throughput validation"]
+                        }
+                      }
+                    }
+                    """);
+
+            List<String> errors = validator.validateVerifierBatch(node);
+                        assertTrue(errors.stream().anyMatch(e -> e.contains("consistency.throughputValid")));
+        }
+
+                @Test
+                @DisplayName("throughputValid=false requires fatal=true")
+                void throughputInvalidRequiresFatal() throws Exception {
+                        JsonNode node = mapper.readTree("""
+                                        {
+                                            "verdicts": {
+                                                "deepseek": {
+                                                    "valid": false,
+                                                    "fatal": false,
+                                                    "math": {
+                                                        "steps": [
+                                                            {
+                                                                "op": "add",
+                                                                "a": 1,
+                                                                "b": 1,
+                                                                "result": 2,
+                                                                "ok": true
+                                                            }
+                                                        ],
+                                                        "allOk": true
+                                                    },
+                                                    "consistency": {
+                                                        "throughputValid": false,
+                                                        "storageValid": true,
+                                                        "latencyValid": true
+                                                    },
+                                                    "errors": ["throughput exceeds system capacity"]
+                                                }
+                                            }
+                                        }
+                                        """);
+
+                        List<String> errors = validator.validateVerifierBatch(node);
+                        assertTrue(errors.stream().anyMatch(e -> e.contains("fatal must be true when throughputValid is false")));
+                }
+
+                                @Test
+                                @DisplayName("batch/message inconsistency error requires fatal=true")
+                                void batchMessageInconsistencyRequiresFatal() throws Exception {
+                                                JsonNode node = mapper.readTree("""
+                                                                                {
+                                                                                    "verdicts": {
+                                                                                        "deepseek": {
+                                                                                            "valid": false,
+                                                                                            "fatal": false,
+                                                                                            "math": {
+                                                                                                "steps": [
+                                                                                                    {
+                                                                                                        "op": "add",
+                                                                                                        "a": 1,
+                                                                                                        "b": 1,
+                                                                                                        "result": 2,
+                                                                                                        "ok": true
+                                                                                                    }
+                                                                                                ],
+                                                                                                "allOk": true
+                                                                                            },
+                                                                                            "consistency": {
+                                                                                                "throughputValid": true,
+                                                                                                "storageValid": true,
+                                                                                                "latencyValid": true
+                                                                                            },
+                                                                                            "errors": ["batch/message inconsistency"]
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                """);
+
+                                                List<String> errors = validator.validateVerifierBatch(node);
+                                                assertTrue(errors.stream().anyMatch(e ->
+                                                                e.contains("fatal must be true when errors include batch/message inconsistency")));
+                                }
+
+                                @Test
+                                @DisplayName("DLQ overload error requires fatal=true")
+                                void dlqOverloadRequiresFatal() throws Exception {
+                                                JsonNode node = mapper.readTree("""
+                                                                                {
+                                                                                    "verdicts": {
+                                                                                        "deepseek": {
+                                                                                            "valid": false,
+                                                                                            "fatal": false,
+                                                                                            "math": {
+                                                                                                "steps": [
+                                                                                                    {
+                                                                                                        "op": "add",
+                                                                                                        "a": 1,
+                                                                                                        "b": 1,
+                                                                                                        "result": 2,
+                                                                                                        "ok": true
+                                                                                                    }
+                                                                                                ],
+                                                                                                "allOk": true
+                                                                                            },
+                                                                                            "consistency": {
+                                                                                                "throughputValid": true,
+                                                                                                "storageValid": true,
+                                                                                                "latencyValid": true
+                                                                                            },
+                                                                                            "errors": ["DLQ overload"]
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                """);
+
+                                                List<String> errors = validator.validateVerifierBatch(node);
+                                                assertTrue(errors.stream().anyMatch(e ->
+                                                                e.contains("fatal must be true when errors include DLQ overload")));
+                                }
+
+                                @Test
+                                @DisplayName("Final enforcer PASS verdict shape is accepted")
+                                void finalEnforcerPassShapeAccepted() throws Exception {
+                                                JsonNode node = mapper.readTree("""
+                                                                                {
+                                                                                    "verdicts": {
+                                                                                        "deepseek": {
+                                                                                            "valid": true
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                """);
+
+                                                List<String> errors = validator.validateVerifierBatch(node);
+                                                assertTrue(errors.isEmpty(), "Expected no errors but got: " + errors);
+                                }
+
+                                @Test
+                                @DisplayName("Final enforcer REJECT verdict shape is accepted")
+                                void finalEnforcerRejectShapeAccepted() throws Exception {
+                                                JsonNode node = mapper.readTree("""
+                                                                                {
+                                                                                    "verdicts": {
+                                                                                        "deepseek": {
+                                                                                            "valid": false,
+                                                                                            "reason": "constraint violation"
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                """);
+
+                                                List<String> errors = validator.validateVerifierBatch(node);
+                                                assertTrue(errors.isEmpty(), "Expected no errors but got: " + errors);
+                                }
+
+                                @Test
+                                @DisplayName("Final enforcer REJECT requires exact reason")
+                                void finalEnforcerRejectRequiresConstraintViolationReason() throws Exception {
+                                                JsonNode node = mapper.readTree("""
+                                                                                {
+                                                                                    "verdicts": {
+                                                                                        "deepseek": {
+                                                                                            "valid": false,
+                                                                                            "reason": "bad math"
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                """);
+
+                                                List<String> errors = validator.validateVerifierBatch(node);
+                                                assertTrue(errors.stream().anyMatch(e ->
+                                                                e.contains("reason must be 'constraint violation' when valid=false")));
+                                }
+    }
+
+    @Nested
+    @DisplayName("Synthesis validation")
+    class SynthesisTests {
+
+        @Test
+        @DisplayName("Valid synthesis payload passes validation")
+        void validSynthesis() throws Exception {
+            JsonNode node = mapper.readTree("""
+                    {
+                      "synthesizedAnswer": "Final production plan with exact capacity math.",
+                      "summary": "Use PostgreSQL for ledger, Kafka for async events, and enforce jittered retries.",
+                      "decisions": ["PostgreSQL ledger", "Kafka event bus"],
+                      "mergedStrengths": ["Correct unit math", "Strong failure handling"],
+                      "discardedClaims": ["NoSQL ledger writes"],
+                      "assumptions": ["Single region deployment"],
+                      "uncertainties": ["Provider p99 latency under peak traffic"],
+                      "confidence": 0.84
+                    }
+                    """);
+
+            List<String> errors = validator.validateSynthesis(node);
+            assertTrue(errors.isEmpty(), "Expected no errors but got: " + errors);
+        }
+
+        @Test
+        @DisplayName("Missing synthesizedAnswer fails validation")
+        void missingSynthesisFieldFails() throws Exception {
+            JsonNode node = mapper.readTree("""
+                    {
+                      "summary": "x",
+                      "decisions": [],
+                      "mergedStrengths": [],
+                      "discardedClaims": [],
+                      "assumptions": [],
+                      "uncertainties": [],
+                      "confidence": 0.5
+                    }
+                    """);
+
+            List<String> errors = validator.validateSynthesis(node);
+            assertTrue(errors.stream().anyMatch(e -> e.contains("synthesizedAnswer")));
+        }
+    }
 }
 

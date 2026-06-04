@@ -35,39 +35,57 @@ public class SpecificityScorer {
     /* ── Numerical estimation patterns ───────────────────────────────── */
 
     /**
+     * Hard cap on the input length subjected to regex scanning.
+     * Prevents catastrophic-backtracking and worst-case linear-scan cost on
+     * adversarial LLM output. Drafts longer than this are truncated to the
+     * prefix before regex matching; keyword {@code contains(...)} checks
+     * still run on the full text.
+     */
+    private static final int MAX_REGEX_INPUT_CHARS = 16_384;
+
+    /**
      * Patterns that detect concrete quantitative estimations.
-     * Each match signals genuine engineering math rather than hand-waving.
+     * <p>
+     * All quantifiers are <b>possessive</b> ({@code *+}, {@code ++}, {@code {n,m}+})
+     * to eliminate backtracking. Character classes that used {@code [^.]} are
+     * restricted to {@code [^.\n]} so a pathological single-line input cannot
+     * drive quadratic scan cost across line boundaries. Nested {@code (...)*}
+     * shapes have been flattened.
      */
     private static final List<Pattern> NUMERICAL_PATTERNS = List.of(
             // Throughput: "10 000 TPS", "50k QPS", "300 RPS", "1M req/s", "120 msg/s"
-            Pattern.compile("\\b\\d[\\d ,]*\\s*(?:k|m|b)?\\s*(?:tps|qps|rps|req/s|msg/s|ops/s|events/s|writes/s|reads/s)\\b",
+            Pattern.compile("\\b\\d[\\d ,]*+\\s*+(?:k|m|b)?+\\s*+(?:tps|qps|rps|req/s|msg/s|ops/s|events/s|writes/s|reads/s)\\b",
                     Pattern.CASE_INSENSITIVE),
-            // Latency: "p99 150ms", "< 200 ms", "500ms", "latency of 100ms", "50 ms latency"
-            Pattern.compile("\\b(?:p99|p95|p50|p999|latency|timeout|sla)[^.]{0,30}\\d+\\s*ms\\b",
+            // Latency with leading context: "p99 150ms", "latency of 100ms" (bounded, possessive)
+            Pattern.compile("\\b(?:p99|p95|p50|p999|latency|timeout|sla)[^.\\n]{0,30}+\\d++\\s*+ms\\b",
                     Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\b\\d+\\s*ms\\b(?:[^.]{0,20}(?:latency|timeout|response|budget|slo|sla))?",
+            // Bare "<n> ms" with optional trailing context (bounded, possessive)
+            Pattern.compile("\\b\\d++\\s*+ms\\b(?:[^.\\n]{0,20}+(?:latency|timeout|response|budget|slo|sla))?+",
                     Pattern.CASE_INSENSITIVE),
             // Storage: "2 TB/day", "500 GB", "10 GB/s"
-            Pattern.compile("\\b\\d[\\d .]*\\s*(?:k|m|g|t)?b(?:/(?:s|day|hour|month))?\\b",
+            Pattern.compile("\\b\\d[\\d .]*+\\s*+(?:k|m|g|t)?+b(?:/(?:s|day|hour|month))?+\\b",
                     Pattern.CASE_INSENSITIVE),
             // Kafka / queue partitions: "34 partitions", "partition count: 12"
-            Pattern.compile("\\b\\d+\\s*partition", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("\\b\\d++\\s*+partition", Pattern.CASE_INSENSITIVE),
             // Replication factor: "replication factor 3", "3 replicas"
-            Pattern.compile("\\b(?:replication factor|\\d+\\s*replica)", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("\\b(?:replication factor|\\d++\\s*+replica)", Pattern.CASE_INSENSITIVE),
             // Node / instance counts: "6 nodes", "3 instances", "5 shards"
-            Pattern.compile("\\b\\d+\\s*(?:node|instance|shard|server|pod|container)s?\\b",
+            Pattern.compile("\\b\\d++\\s*+(?:node|instance|shard|server|pod|container)s?+\\b",
                     Pattern.CASE_INSENSITIVE),
             // User / request scale: "1M users", "100k concurrent", "10 000 users"
-            Pattern.compile("\\b\\d[\\d ,]*\\s*(?:k|m|b)?\\s*(?:user|request|connection|session|client)s?\\b",
+            Pattern.compile("\\b\\d[\\d ,]*+\\s*+(?:k|m|b)?+\\s*+(?:user|request|connection|session|client)s?+\\b",
                     Pattern.CASE_INSENSITIVE),
             // Retry / backoff numbers: "150ms backoff", "retry 3 times", "3 retries"
-            Pattern.compile("\\b\\d+\\s*(?:x|times?)?\\s*retr(?:y|ies)\\b|\\b\\d+\\s*ms\\s*(?:exponential\\s*)?backoff\\b",
+            Pattern.compile("\\b\\d++\\s*+(?:x|times?+)?+\\s*+retr(?:y|ies)\\b|\\b\\d++\\s*+ms\\s*+(?:exponential\\s*+)?+backoff\\b",
                     Pattern.CASE_INSENSITIVE),
             // Percentage / error budget: "99.9%", "0.1% error", "budget of 1%"
-            Pattern.compile("\\b\\d+(?:\\.\\d+)?\\s*%\\s*(?:availability|uptime|error|budget|slo|sla)?\\b",
+            Pattern.compile("\\b\\d++(?:\\.\\d++)?+\\s*+%\\s*+(?:availability|uptime|error|budget|slo|sla)?+\\b",
                     Pattern.CASE_INSENSITIVE),
-                // Explicit arithmetic estimation: "10k * 5 / 60 = 833"
-            Pattern.compile("\\b\\d[\\d ,]*(?:\\.\\d+)?\\s*[x*+/-]\\s*\\d[\\d ,]*(?:\\.\\d+)?(?:\\s*[x*+/-]\\s*\\d[\\d ,]*(?:\\.\\d+)?)*\\s*=\\s*\\d[\\d ,]*(?:\\.\\d+)?\\b",
+            // Explicit arithmetic estimation: "10k * 5 / 60 = 833".
+            // Flattened (no nested `*`): bounded repetition {0,8}+ on the "operator operand"
+            // group eliminates the catastrophic-backtracking shape and still matches
+            // realistic expressions up to 9 operands.
+            Pattern.compile("\\b\\d[\\d ,]*+(?:\\.\\d++)?+(?:\\s*+[x*+/-]\\s*+\\d[\\d ,]*+(?:\\.\\d++)?+){0,8}+\\s*+=\\s*+\\d[\\d ,]*+(?:\\.\\d++)?+\\b",
                     Pattern.CASE_INSENSITIVE)
     );
 
@@ -226,25 +244,45 @@ public class SpecificityScorer {
     /**
      * Count how many distinct numerical estimation patterns appear in the answer.
      * Each pattern is counted once (presence, not frequency) to avoid gaming.
+     * Input longer than {@link #MAX_REGEX_INPUT_CHARS} is truncated before
+     * scanning to bound worst-case runtime on adversarial LLM output.
      */
     public int countNumericalMatches(String answer) {
         if (answer == null || answer.isBlank()) return 0;
+        CharSequence bounded = boundForRegex(answer);
         int count = 0;
         for (Pattern p : NUMERICAL_PATTERNS) {
-            if (p.matcher(answer).find()) count++;
+            if (p.matcher(bounded).find()) count++;
         }
         return count;
     }
 
     /**
      * Count how many fluff phrases appear in the answer.
+     * Input longer than {@link #MAX_REGEX_INPUT_CHARS} is truncated before
+     * scanning to bound worst-case runtime on adversarial LLM output.
      */
     public int countFluff(String lowerAnswer) {
+        if (lowerAnswer == null || lowerAnswer.isEmpty()) return 0;
+        CharSequence bounded = boundForRegex(lowerAnswer);
         int count = 0;
         for (Pattern p : FLUFF_PATTERNS) {
-            if (p.matcher(lowerAnswer).find()) count++;
+            if (p.matcher(bounded).find()) count++;
         }
         return count;
+    }
+
+    /**
+     * Truncate the given text to {@link #MAX_REGEX_INPUT_CHARS} characters for
+     * regex scanning. The truncation is deterministic (prefix) and does not
+     * affect keyword {@code contains(...)} checks, which still run on the full
+     * text in {@link #score(String, TaskType)}.
+     */
+    private static CharSequence boundForRegex(String text) {
+        if (text.length() <= MAX_REGEX_INPUT_CHARS) {
+            return text;
+        }
+        return text.substring(0, MAX_REGEX_INPUT_CHARS);
     }
 
     /**

@@ -6,6 +6,7 @@ import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -22,29 +23,31 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Run it explicitly:
  * <pre>{@code
- * mvn test -Dtest=TestProviderDirectly -Dgroups=live
+ * $env:NVIDIA_LLAMA_API_KEY="..."
+ * mvn test -Dtest=TestProviderDirectly -Dlive.provider.tests=true
  * }</pre>
  *
  * <p>What to look for in the console output:
  * <ul>
- *   <li>DEBUG lines from {@code NvidiaAdapter} showing the outbound request JSON and masked key</li>
- *   <li>DEBUG lines showing the raw HTTP 200 response body</li>
- *   <li>The extracted answer printed at the end</li>
+ *   <li>Provider/model identification</li>
+ *   <li>Success/failure and latency</li>
+ *   <li>A short answer preview</li>
  * </ul>
  */
 @Tag("live")
+@EnabledIfSystemProperty(named = "live.provider.tests", matches = "true")
 @SpringBootTest
 @ActiveProfiles("test")   // use H2 + flyway-disabled — no Postgres needed
 @TestPropertySource(properties = {
         // Re-enable nvidia on top of the test profile (TestPropertySource wins over yml)
         "council.providers.nvidia.enabled=true",
-        "council.providers.nvidia.api-key=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",
+        "council.providers.nvidia.api-key=${NVIDIA_LLAMA_API_KEY:}",
         "council.providers.nvidia.base-url=https://integrate.api.nvidia.com/v1",
         "council.providers.nvidia.model=meta/llama-3.3-70b-instruct",
-        "council.providers.nvidia.timeout-seconds=60",
+        "council.providers.nvidia.timeout-seconds=45",
         "council.providers.nvidia.max-tokens=512",
-        // Verbose adapter logging
-        "logging.level.com.council.provider=DEBUG"
+        "council.orchestrator.max-retries=0",
+        "logging.level.com.council.provider=INFO"
 })
 class TestProviderDirectly {
 
@@ -52,13 +55,13 @@ class TestProviderDirectly {
     private ProviderRegistry registry;
 
     /**
-     * Calls the NVIDIA Llama-3.3-70B model with a trivial prompt to verify:
+     * Calls the NVIDIA Llama-3.3-70B model with a complex systems prompt to verify:
      * 1. The RestClient is built correctly (correct base URL, Bearer token)
      * 2. The HTTP POST reaches the NVIDIA NIM endpoint
      * 3. The response JSON is parsed into a {@link DraftResult}
      */
     @Test
-    void nvidia_llama_connectivityCheck_simpleArithmetic() {
+    void nvidia_llama_connectivityCheck_complexArchitecturePrompt() {
         LlmAdapter nvidia = registry.getAdapter("nvidia")
                 .orElseThrow(() -> new AssertionError(
                         "NVIDIA adapter not found in registry. " +
@@ -67,11 +70,17 @@ class TestProviderDirectly {
         System.out.println("=== Provider: " + nvidia.providerName());
         System.out.println("=== Model:    " + nvidia.modelName());
 
-        DraftResult result = nvidia.generateDraft(DraftRequest.of("live-test-001", "What is 2+2?"));
+        String prompt = System.getProperty("live.provider.prompt", """
+                Analyze a payment orchestration service at 50,000 TPS across card, UPI, and wallet providers.
+                Be concise but include ledger consistency, idempotency, Kafka partition math, DLQ capacity,
+                p99 latency budget, and one concrete provider-outage runbook.
+                """);
+
+        DraftResult result = nvidia.generateDraft(DraftRequest.of("live-test-complex-001", prompt));
 
         System.out.println("=== Success:  " + result.isSuccess());
         System.out.println("=== Latency:  " + result.latencyMs() + " ms");
-        System.out.println("=== Answer:   " + result.answer());
+        System.out.println("=== Answer:   " + preview(result.answer()));
         if (!result.isSuccess()) {
             System.out.println("=== Error:    " + result.errorMessage());
         }
@@ -85,5 +94,13 @@ class TestProviderDirectly {
         assertThat(result.answer())
                 .as("Expected a non-empty answer from the model")
                 .isNotBlank();
+    }
+
+    private String preview(String answer) {
+        if (answer == null) {
+            return "";
+        }
+        String compact = answer.replaceAll("\\s+", " ").trim();
+        return compact.length() <= 600 ? compact : compact.substring(0, 600) + "...";
     }
 }

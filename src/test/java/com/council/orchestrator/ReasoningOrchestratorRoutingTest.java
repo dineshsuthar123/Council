@@ -12,6 +12,7 @@ import com.council.model.*;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
 import com.council.provider.routing.*;
+import com.council.synthesizer.SynthesizerEngine;
 import com.council.trace.TraceService;
 import com.council.verifier.VerifierEngine;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -35,6 +36,7 @@ class ReasoningOrchestratorRoutingTest {
     private ProviderRegistry registry;
     private CriticEngine criticEngine;
         private VerifierEngine verifierEngine;
+        private SynthesizerEngine synthesizerEngine;
     private TraceService traceService;
     private OrchestrationMetrics metrics;
     private ProviderSelectionStrategy selectionStrategy;
@@ -46,6 +48,7 @@ class ReasoningOrchestratorRoutingTest {
         registry = mock(ProviderRegistry.class);
         criticEngine = mock(CriticEngine.class);
         verifierEngine = mock(VerifierEngine.class);
+        synthesizerEngine = mock(SynthesizerEngine.class);
         traceService = mock(TraceService.class);
         selectionStrategy = mock(ProviderSelectionStrategy.class);
         concurrencyLimiter = new ProviderConcurrencyLimiter();
@@ -70,10 +73,13 @@ class ReasoningOrchestratorRoutingTest {
         when(registry.isRoutingEnabled()).thenReturn(true);
         when(registry.getAllAdapters()).thenReturn(Map.of());
         when(registry.buildDescriptors()).thenReturn(List.of());
-        when(verifierEngine.verifyDraft(any())).thenReturn(VerifierResult.passed());
+        when(verifierEngine.verify(anyString(), anyString(), anyList()))
+                .thenReturn(VerifierBatchResult.success(Map.of()));
+        when(synthesizerEngine.synthesize(any()))
+                .thenReturn(SynthesisResult.failure("none", "none", "synthesis unavailable", 0));
 
         DeterministicJudge judge = new DeterministicJudge(props, new SpecificityScorer());
-        orchestrator = new ReasoningOrchestrator(registry, criticEngine, verifierEngine, judge,
+        orchestrator = new ReasoningOrchestrator(registry, criticEngine, verifierEngine, synthesizerEngine, judge,
                 new PromptClassifier(), traceService, metrics, props, selectionStrategy, concurrencyLimiter);
     }
 

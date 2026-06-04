@@ -1,6 +1,9 @@
 package com.council.provider;
 
+import com.council.model.CriticResult;
 import com.council.model.DraftResult;
+import com.council.model.VerifierBatchResult;
+import com.council.model.VerifierVerdict;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -93,41 +96,206 @@ public final class PromptTemplates {
 
       // ── Verifier prompt ──────────────────────────────────────────────────────
 
-      public static String buildVerifierPrompt(String userQuery, DraftResult draft) {
+      public static String buildVerifierPrompt(String userQuery, List<DraftResult> drafts) {
+            String draftSection = (drafts == null ? List.<DraftResult>of() : drafts).stream()
+                    .map(PromptTemplates::formatDraftForVerifier)
+                    .collect(Collectors.joining(",\n"));
+
             return """
-                        CRITICAL: YOU MUST OUTPUT ONLY VALID JSON. DO NOT INCLUDE PREAMBLES, GREETINGS, OR MARKDOWN. YOUR OUTPUT MUST START WITH '{' AND END WITH '}'.
+                              You are a FINAL CONSTRAINT ENFORCER.
 
-                        You are a mathematical calculator and constraint verifier. You do NOT evaluate architecture quality. Your ONLY job is to extract every equation, unit conversion (KB/MB/GB/TB/PB), and magnitude estimation in the draft and RECALCULATE IT YOURSELF.
+                              Your job is to REJECT physically impossible system designs.
 
-                        If 4,000,000,000 KB is claimed to be 4 GB, you must flag containsFatalMathError = true.
-                        If a CORE FINANCIAL LEDGER uses Cassandra/MongoDB, flag containsConsistencyViolation = true. However, you MUST ALLOW the use of NoSQL (Cassandra/MongoDB) for logs, analytics, and telemetry. Do NOT flag a violation if NoSQL is strictly isolated to non-ledger data.
+                              You MUST NOT score.
+                              You MUST NOT explain.
+                              You MUST ONLY decide VALID or REJECT.
 
-                        Rules:
-                        1. Recompute every numeric claim from scratch.
-                        2. Validate unit conversions explicitly (KB->MB->GB->TB->PB).
-                        3. Validate capacity and throughput equations end-to-end.
-                        4. If any fatal math or unit error exists, set containsFatalMathError=true.
-                        5. If any core-ledger consistency violation exists, set containsConsistencyViolation=true.
-                        5a. ALLOW NoSQL for logs/analytics/telemetry. Only flag consistency violations when NoSQL is used for the core financial ledger itself.
-                        6. If either boolean is true, fatalErrorReason MUST explain the exact failing claim.
-                        7. If both booleans are false, fatalErrorReason MUST be null.
+                              INPUT:
+                              You receive computed values, verifier results, and system parameters.
 
-                        ═══ JSON SCHEMA ═══
+                              Apply all rules per draft id:
+
+                              RULE 1: THROUGHPUT LIMIT
+                              - Assume max_per_partition = 1000 msg/sec.
+                              - required_partitions = ceil(inputTPS / max_per_partition).
+                              - If actual_partitions < required_partitions => REJECT.
+
+                              RULE 2: DLQ CAPACITY
+                              - dlq_load_per_partition = dlq_tps / dlq_partitions.
+                              - If dlq_load_per_partition > 1000 => REJECT.
+
+                              RULE 3: LATENCY REALITY
+                              - If per_message_latency < 0.5 ms => REJECT.
+
+                              RULE 4: INTERNAL CONSISTENCY
+                              - If any derived number contradicts another => REJECT.
+
+                              RULE 5: FAIL FAST
+                              - If ANY rule fails, return:
+                                 { "valid": false, "reason": "constraint violation" }
+                              - Otherwise, return:
+                                 { "valid": true }
+
+                              IMPORTANT:
+                              - NO partial credit.
+                              - NO scoring.
+                              - NO reasoning.
+                              - ONLY PASS or REJECT.
+
+                              OUTPUT FORMAT (STRICT JSON BATCH):
+                              {
+                                 "verdicts": {
+                                    "<draftId>": {
+                                       "valid": true
+                                    }
+                                 }
+                              }
+
+                              For rejected drafts:
+                              {
+                                 "verdicts": {
+                                    "<draftId>": {
+                                       "valid": false,
+                                       "reason": "constraint violation"
+                                    }
+                                 }
+                              }
+
+                    INPUT PAYLOAD:
+                    {
+                      "userQuery": "%s",
+                      "drafts": [
+                        %s
+                      ]
+                    }
+
+                    Use each draft "id" exactly as key under "verdicts".
+                    Output pure JSON only.
+                    """.formatted(escapeForPromptJson(userQuery), draftSection);
+      }
+
+      /**
+       * Backward-compatible overload used by legacy tests/callers.
+       */
+      public static String buildVerifierPrompt(String userQuery, DraftResult draft) {
+            return buildVerifierPrompt(userQuery, List.of(draft));
+      }
+
+      // ── Synthesizer prompt ───────────────────────────────────────────────────
+
+      public static String buildSynthesizerPrompt(String userQuery,
+                                                                        List<DraftResult> drafts,
+                                                                        VerifierBatchResult verifierBatchResult,
+                                                                        CriticResult criticResult) {
+            List<DraftResult> safeDrafts = drafts == null ? List.of() : drafts;
+
+            String draftSection = safeDrafts.stream()
+                        .map(PromptTemplates::formatDraftForSynthesis)
+                        .collect(Collectors.joining("\n\n---\n\n"));
+
+            String verifierSection = formatVerifierForSynthesis(safeDrafts, verifierBatchResult);
+            String criticSection = formatCriticForSynthesis(criticResult);
+
+            return """
+                        You are the SYNTHESIZER in a multi-model reasoning system.
+
+                        Your job is NOT to select the best draft.
+                        Your job is to construct a new final answer that is better than every individual draft.
+
+                        You will receive:
+                        1) The original user query
+                        2) Multiple candidate drafts
+                        3) Verifier results for each draft
+                        4) Critic notes, if any
+
+                        Your output must be a single unified answer that:
+                        - preserves the strongest validated ideas from the drafts
+                        - removes weak, redundant, contradictory, or unsafe claims
+                        - resolves disagreements with explicit final decisions
+                        - improves clarity, completeness, and practical usefulness
+                        - obeys all verifier constraints
+                        - does NOT merely copy one draft
+                        - does NOT mention internal model names or the existence of drafts
+
+                        SYNTHESIS RULES
+
+                        1. Merge, do not vote.
+                            - Combine the best parts from different drafts into one coherent answer.
+                            - If Draft A has better math and Draft B has better failure handling, keep both strengths.
+                            - Do not return a plain winner selection.
+
+                        2. Hard reject invalid content.
+                            - If the verifier marks a draft with fatal math, consistency violation, or throughput contradiction, do not use that claim.
+                            - Only reuse claims that survive verification.
+
+                        3. Resolve conflicts decisively.
+                            - If drafts disagree on architecture, storage, throughput, retries, or failure handling, choose one final path and explain why it is the best choice.
+                            - Do not hedge with "it depends" unless the user explicitly asked for alternatives.
+
+                        4. Prefer the strongest validated reasoning.
+                            - Keep exact numbers when they are correct.
+                            - Recompute any critical equation yourself if the drafts conflict.
+                            - Fix unit conversions, throughput estimates, storage math, and retry logic.
+
+                        5. Improve the answer.
+                            - Fill missing gaps.
+                            - Tighten weak explanations.
+                            - Make the final answer more operational, more precise, and more realistic than any input draft.
+
+                        6. Be structurally clean.
+                            - Use a clear architecture.
+                            - Put decisions first.
+                            - Then math.
+                            - Then failure handling.
+                            - Then trade-offs or assumptions.
+                            - End with a crisp summary.
+
+                        7. Stay grounded.
+                            - Do not invent unsupported facts.
+                            - Do not inflate confidence.
+                            - Do not add unnecessary complexity.
+
+                        OUTPUT FORMAT
+
+                        Return valid JSON only, with this schema:
+
                         {
-                           "containsFatalMathError": false,
-                           "containsConsistencyViolation": false,
-                           "fatalErrorReason": null
+                           "synthesizedAnswer": "string",
+                           "summary": "string",
+                           "decisions": [
+                              "string"
+                           ],
+                           "mergedStrengths": [
+                              "string"
+                           ],
+                           "discardedClaims": [
+                              "string"
+                           ],
+                           "assumptions": [
+                              "string"
+                           ],
+                           "uncertainties": [
+                              "string"
+                           ],
+                           "confidence": 0.0
                         }
 
-                        User Query:
+                        QUALITY BAR
+
+                        The final answer should read like a principal engineer wrote it after reviewing multiple drafts, not like a summary of them.
+
+                        Original User Query:
                         %s
 
-                        Draft Under Verification:
-                        Provider: %s
-                        Model: %s
-                        Answer:
+                        Candidate Drafts:
                         %s
-                        """.formatted(userQuery, draft.provider(), draft.model(), draft.answer());
+
+                        Verifier Results:
+                        %s
+
+                        Critic Notes:
+                        %s
+                        """.formatted(userQuery, draftSection, verifierSection, criticSection);
       }
 
     // ── Critic prompt ─────────────────────────────────────────────────────────
@@ -251,4 +419,90 @@ public final class PromptTemplates {
                         String.join(", ", draft.uncertainties())
                 );
     }
+
+      private static String formatDraftForVerifier(DraftResult draft) {
+         return ("{\n" +
+            "  \"id\": \"%s\",\n" +
+            "  \"content\": \"%s\"\n" +
+            "}")
+               .formatted(
+                     draft.provider(),
+               escapeForPromptJson(draft.answer())
+               );
+      }
+
+          private static String escapeForPromptJson(String value) {
+         if (value == null) {
+             return "";
+         }
+         return value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\r", " ")
+            .replace("\n", " ");
+          }
+
+      private static String formatDraftForSynthesis(DraftResult draft) {
+         return ("Provider: %s" +
+               "\nModel: %s" +
+               "\nAnswer: %s" +
+               "\nSummary: %s" +
+               "\nAssumptions: %s" +
+               "\nUncertainties: %s" +
+               "\nConfidence: %.2f")
+               .formatted(
+                     draft.provider(),
+                     draft.model(),
+                     draft.answer(),
+                     draft.summary(),
+                     String.join(", ", draft.assumptions()),
+                     String.join(", ", draft.uncertainties()),
+                     draft.confidence()
+               );
+      }
+
+      private static String formatVerifierForSynthesis(List<DraftResult> drafts,
+                                           VerifierBatchResult verifierBatchResult) {
+         if (verifierBatchResult == null) {
+            return "No verifier results available.";
+         }
+         if (verifierBatchResult.isInternalError()) {
+            return "Verifier internal error: " + verifierBatchResult.internalErrorReason();
+         }
+
+         StringBuilder sb = new StringBuilder();
+         for (DraftResult draft : drafts) {
+            VerifierVerdict verdict = verifierBatchResult.verdictForProvider(draft.provider());
+            sb.append("Provider: ").append(draft.provider())
+                  .append(" | containsFatalMathError=").append(verdict.containsFatalMathError())
+                  .append(", containsConsistencyViolation=").append(verdict.containsConsistencyViolation())
+                  .append(", containsThroughputContradiction=").append(verdict.containsThroughputContradiction())
+                  .append(", fatalErrorReason=").append(verdict.fatalErrorReason())
+                  .append("\n");
+         }
+         return sb.toString().trim();
+      }
+
+      private static String formatCriticForSynthesis(CriticResult criticResult) {
+         if (criticResult == null || !criticResult.isSuccess()) {
+            return "No critic notes available.";
+         }
+
+         return ("globalSummary=%s" +
+               "\ncontradictionSeverity=%.2f" +
+               "\nmissingPoints=%s" +
+               "\nriskyClaims=%s" +
+               "\nmathCorrectnessScore=%.2f" +
+               "\nfeasibilityScore=%.2f" +
+               "\nfailureDepthScore=%.2f")
+               .formatted(
+                     criticResult.globalSummary(),
+                     criticResult.contradictionSeverity(),
+                     criticResult.missingPoints(),
+                     criticResult.riskyClaims(),
+                     criticResult.mathCorrectnessScore(),
+                     criticResult.feasibilityScore(),
+                     criticResult.failureDepthScore()
+               );
+      }
 }

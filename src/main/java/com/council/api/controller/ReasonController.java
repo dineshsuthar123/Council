@@ -29,7 +29,7 @@ public class ReasonController {
 
     @Operation(summary = "Submit a reasoning query",
                description = "Sends the query to all enabled LLM providers in parallel, "
-                       + "runs critic evaluation, and returns the best answer selected by the judge.")
+                   + "runs critic and verifier evaluation, then returns a synthesized final answer.")
     @PostMapping("/reason")
     public ResponseEntity<FinalResponse> reason(@Valid @RequestBody ReasonRequest request) {
         log.info("[api] Received reasoning request, queryLength={}", request.query().length());

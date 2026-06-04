@@ -175,12 +175,18 @@ council:
   critic:
     provider: openrouter
 
+  # Synthesizer → OpenRouter Nemotron
+  synthesizer:
+    provider: openrouter
+
   orchestrator:
     max-retries: 2
     cooldown-minutes: 15
     consecutive-429-threshold: 3
     draft-timeout-seconds: 90
     critic-timeout-seconds: 120
+    verifier-timeout-seconds: 30
+    synthesis-timeout-seconds: 60
 
   # ── Intelligent Routing ──
   routing:

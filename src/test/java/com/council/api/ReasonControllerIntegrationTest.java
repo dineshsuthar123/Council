@@ -73,6 +73,27 @@ class ReasonControllerIntegrationTest {
     }
 
     @Test
+    @DisplayName("POST /api/v1/design/self-correct returns deterministic repaired design")
+    void designSelfCorrectReturnsRepairedDesign() throws Exception {
+        mockMvc.perform(post("/api/v1/design/self-correct")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "tps": 50000,
+                                  "failure_rate": 0.01,
+                                  "per_pod_msgs_per_sec": 5000,
+                                  "partitions": 1,
+                                  "dlq_partitions": 1,
+                                  "consumer_pods": 1
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("VALID"))
+                .andExpect(jsonPath("$.design.partitions").value(50))
+                .andExpect(jsonPath("$.design.consumer_pods").value(11));
+    }
+
+    @Test
     @DisplayName("GET /api/v1/health returns status")
     void healthReturnsStatus() throws Exception {
         mockMvc.perform(get("/api/v1/health"))

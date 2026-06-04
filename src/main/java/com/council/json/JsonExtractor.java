@@ -2,9 +2,6 @@ package com.council.json;
 
 import org.springframework.stereotype.Component;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 /**
  * Deterministic utilities for extracting JSON from noisy LLM output.
  * <p>
@@ -18,9 +15,6 @@ import java.util.regex.Pattern;
 @Component
 public class JsonExtractor {
 
-    private static final Pattern MARKDOWN_FENCE_BLOCK =
-            Pattern.compile("```(?:json)?\\s*\\n?(.*?)\\n?\\s*```", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-
     /**
      * Strip markdown code fences and return inner content.
      */
@@ -28,15 +22,19 @@ public class JsonExtractor {
         if (raw == null) return null;
         String cleaned = raw;
 
-        // If we have a full fenced block, prefer the inner payload.
-        Matcher blockMatcher = MARKDOWN_FENCE_BLOCK.matcher(cleaned);
-        if (blockMatcher.find()) {
-            cleaned = blockMatcher.group(1);
+        // If we have a fenced block, prefer content between the first opening and closing fences.
+        int openingFence = cleaned.indexOf("```");
+        if (openingFence >= 0) {
+            int openingLineBreak = indexOfLineBreak(cleaned, openingFence);
+            int payloadStart = openingLineBreak == -1 ? openingFence + 3 : openingLineBreak + 1;
+            int closingFence = cleaned.indexOf("```", payloadStart);
+            if (closingFence >= payloadStart) {
+                cleaned = cleaned.substring(payloadStart, closingFence);
+            }
         }
 
-        // Aggressively remove any remaining fence markers.
-        cleaned = cleaned.replaceAll("(?im)^\\s*```(?:json)?\\s*$", "");
-        cleaned = cleaned.replaceAll("(?im)^\\s*```\\s*$", "");
+        // Remove any remaining fence markers without regex.
+        cleaned = stripFenceLines(cleaned);
         cleaned = cleaned.replace("```json", "")
                 .replace("```JSON", "")
                 .replace("```", "");
@@ -110,6 +108,48 @@ public class JsonExtractor {
             }
         }
         return null; // unbalanced
+    }
+
+    private int indexOfLineBreak(String text, int start) {
+        for (int i = Math.max(0, start); i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\n' || c == '\r') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private String stripFenceLines(String text) {
+        StringBuilder out = new StringBuilder(text.length());
+        int i = 0;
+        while (i < text.length()) {
+            int lineStart = i;
+            while (i < text.length() && text.charAt(i) != '\n' && text.charAt(i) != '\r') {
+                i++;
+            }
+            int lineEnd = i;
+
+            int newlineStart = i;
+            if (i < text.length() && text.charAt(i) == '\r') {
+                i++;
+            }
+            if (i < text.length() && text.charAt(i) == '\n') {
+                i++;
+            }
+
+            String line = text.substring(lineStart, lineEnd);
+            if (!isFenceLine(line)) {
+                out.append(line);
+                out.append(text, newlineStart, i);
+            }
+        }
+        return out.toString();
+    }
+
+    private boolean isFenceLine(String line) {
+        String trimmed = line.trim();
+        return "```".equals(trimmed) || "```json".equalsIgnoreCase(trimmed);
     }
 }
 

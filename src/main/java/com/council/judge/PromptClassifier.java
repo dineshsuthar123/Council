@@ -119,7 +119,8 @@ public class PromptClassifier {
                 }
             }
 
-            if (score > bestScore) {
+            if (score > bestScore || (score == bestScore && score > 0
+                    && tieBreakPriority(entry.getKey()) < tieBreakPriority(best))) {
                 bestScore = score;
                 best = entry.getKey();
             }
@@ -132,6 +133,16 @@ public class PromptClassifier {
         }
 
         return best;
+    }
+
+    private int tieBreakPriority(TaskType taskType) {
+        return switch (taskType) {
+            case SYSTEM_DESIGN -> 0;
+            case BACKEND_ARCHITECTURE -> 1;
+            case DEBUGGING -> 2;
+            case CODING -> 3;
+            case GENERAL_REASONING -> 100;
+        };
     }
 }
 

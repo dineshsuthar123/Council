@@ -14,6 +14,17 @@ public record FinalResponse(
         String judgeReason,
         List<String> usedProviders,
         List<String> failedProviders,
-        double confidence
-) {}
+        double confidence,
+        String error,
+        String message
+) {
+    public FinalResponse(String traceId,
+                         String finalAnswer,
+                         String judgeReason,
+                         List<String> usedProviders,
+                         List<String> failedProviders,
+                         double confidence) {
+        this(traceId, finalAnswer, judgeReason, usedProviders, failedProviders, confidence, null, null);
+    }
+}
 
