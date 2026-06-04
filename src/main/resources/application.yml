@@ -163,10 +163,10 @@ council:
       reliability: 0.60
       max-tokens: 2048
     claude:
-      enabled: false
+      enabled: true
       api-key: ${CLAUDE_API_KEY:}
-      base-url: https://api.anthropic.com
-      model: claude-sonnet-4-20250514
+      base-url: https://api.blackbox.ai
+      model: blackboxai/anthropic/claude-sonnet-4.6
       timeout-seconds: 60
       reliability: 0.90
       max-tokens: 4096
@@ -230,3 +230,9 @@ council:
         priority: 11
         max-concurrency: 1
         fallback-providers: [openrouter]
+      claude:
+        display-name: Blackbox Claude Sonnet
+        roles: [CRITIC, PREMIUM_ESCALATION, BASELINE]
+        priority: 12
+        max-concurrency: 1
+        fallback-providers: [openrouter, gemini]

@@ -22,7 +22,7 @@ public class SynthesizerEngine {
     private static final Logger log = LoggerFactory.getLogger(SynthesizerEngine.class);
 
     private static final List<String> SYNTHESIS_FALLBACK_CHAIN = List.of(
-            "openrouter", "gemini", "deepseek", "mistral", "kimi", "nvidia"
+            "openrouter", "claude", "gemini", "deepseek", "mistral", "kimi", "nvidia"
     );
 
     private final ProviderRegistry registry;

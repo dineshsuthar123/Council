@@ -56,7 +56,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "council.providers.gemini.timeout-seconds=45",
         "council.providers.gemini.max-tokens=2048",
 
-        "council.providers.deepseek.enabled=true",
+        "council.providers.deepseek.enabled=false",
         "council.providers.deepseek.api-key=${DEEPSEEK_API_KEY:}",
         "council.providers.deepseek.base-url=https://api.deepseek.com",
         "council.providers.deepseek.model=deepseek-chat",
@@ -70,25 +70,32 @@ import static org.assertj.core.api.Assertions.assertThat;
         "council.providers.groq.timeout-seconds=30",
         "council.providers.groq.max-tokens=2048",
 
-        "council.providers.openrouter.enabled=false",
+        "council.providers.openrouter.enabled=true",
         "council.providers.openrouter.api-key=${OPENROUTER_NEMOTRON_API_KEY:}",
         "council.providers.openrouter.base-url=https://openrouter.ai/api",
         "council.providers.openrouter.model=nvidia/llama-3.1-nemotron-70b-instruct",
         "council.providers.openrouter.timeout-seconds=45",
         "council.providers.openrouter.max-tokens=768",
 
-        "council.providers.openrouter-qwen.enabled=false",
+        "council.providers.openrouter-qwen.enabled=true",
         "council.providers.openrouter-qwen.api-key=${OPENROUTER_QWEN_API_KEY:}",
         "council.providers.openrouter-qwen.base-url=https://openrouter.ai/api",
         "council.providers.openrouter-qwen.model=qwen/qwen-2.5-72b-instruct",
         "council.providers.openrouter-qwen.timeout-seconds=40",
         "council.providers.openrouter-qwen.max-tokens=512",
 
-        "council.critic.provider=groq",
-        "council.synthesizer.provider=groq",
+        "council.providers.claude.enabled=true",
+        "council.providers.claude.api-key=${CLAUDE_API_KEY:}",
+        "council.providers.claude.base-url=https://api.blackbox.ai",
+        "council.providers.claude.model=blackboxai/anthropic/claude-sonnet-4.6",
+        "council.providers.claude.timeout-seconds=45",
+        "council.providers.claude.max-tokens=4096",
+
+        "council.critic.provider=openrouter",
+        "council.synthesizer.provider=openrouter",
         "council.routing.enabled=true",
-        "council.routing.max-draft-providers=2",
-        "council.routing.max-escalation-providers=0",
+        "council.routing.max-draft-providers=3",
+        "council.routing.max-escalation-providers=1",
 
         "council.routing.provider-routes.nvidia.roles[0]=DRAFT",
         "council.routing.provider-routes.nvidia.priority=1",
@@ -109,9 +116,13 @@ import static org.assertj.core.api.Assertions.assertThat;
         "council.routing.provider-routes.openrouter.roles[0]=CRITIC",
         "council.routing.provider-routes.openrouter.priority=10",
         "council.routing.provider-routes.openrouter.max-concurrency=1",
-        "council.routing.provider-routes.openrouter-qwen.roles[0]=EXPERIMENTAL",
-        "council.routing.provider-routes.openrouter-qwen.priority=20",
+        "council.routing.provider-routes.openrouter-qwen.roles[0]=DRAFT",
+        "council.routing.provider-routes.openrouter-qwen.priority=3",
         "council.routing.provider-routes.openrouter-qwen.max-concurrency=1",
+        "council.routing.provider-routes.claude.roles[0]=CRITIC",
+        "council.routing.provider-routes.claude.roles[1]=PREMIUM_ESCALATION",
+        "council.routing.provider-routes.claude.priority=12",
+        "council.routing.provider-routes.claude.max-concurrency=1",
 
         "logging.level.com.council.provider=INFO"
 })
