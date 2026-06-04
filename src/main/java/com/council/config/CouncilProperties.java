@@ -16,17 +16,23 @@ public class CouncilProperties {
 
     private Map<String, ProviderConfig> providers = new HashMap<>();
     private CriticConfig critic = new CriticConfig();
+    private SynthesizerConfig synthesizer = new SynthesizerConfig();
     private OrchestratorConfig orchestrator = new OrchestratorConfig();
     private RoutingConfig routing = new RoutingConfig();
+    private DesignAgentConfig designAgent = new DesignAgentConfig();
 
     public Map<String, ProviderConfig> getProviders() { return providers; }
     public void setProviders(Map<String, ProviderConfig> providers) { this.providers = providers; }
     public CriticConfig getCritic() { return critic; }
     public void setCritic(CriticConfig critic) { this.critic = critic; }
+    public SynthesizerConfig getSynthesizer() { return synthesizer; }
+    public void setSynthesizer(SynthesizerConfig synthesizer) { this.synthesizer = synthesizer; }
     public OrchestratorConfig getOrchestrator() { return orchestrator; }
     public void setOrchestrator(OrchestratorConfig orchestrator) { this.orchestrator = orchestrator; }
     public RoutingConfig getRouting() { return routing; }
     public void setRouting(RoutingConfig routing) { this.routing = routing; }
+    public DesignAgentConfig getDesignAgent() { return designAgent; }
+    public void setDesignAgent(DesignAgentConfig designAgent) { this.designAgent = designAgent; }
 
     public static class ProviderConfig {
         private boolean enabled = true;
@@ -65,12 +71,21 @@ public class CouncilProperties {
         public void setProvider(String provider) { this.provider = provider; }
     }
 
+    public static class SynthesizerConfig {
+        private String provider = "openrouter";
+
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
+    }
+
     public static class OrchestratorConfig {
         private int maxRetries = 2;
         private int cooldownMinutes = 15;
         private int consecutive429Threshold = 3;
         private int draftTimeoutSeconds = 90;
         private int criticTimeoutSeconds = 120;
+        private int verifierTimeoutSeconds = 30;
+        private int synthesisTimeoutSeconds = 60;
 
         public int getMaxRetries() { return maxRetries; }
         public void setMaxRetries(int maxRetries) { this.maxRetries = maxRetries; }
@@ -82,6 +97,10 @@ public class CouncilProperties {
         public void setDraftTimeoutSeconds(int draftTimeoutSeconds) { this.draftTimeoutSeconds = draftTimeoutSeconds; }
         public int getCriticTimeoutSeconds() { return criticTimeoutSeconds; }
         public void setCriticTimeoutSeconds(int criticTimeoutSeconds) { this.criticTimeoutSeconds = criticTimeoutSeconds; }
+        public int getVerifierTimeoutSeconds() { return verifierTimeoutSeconds; }
+        public void setVerifierTimeoutSeconds(int verifierTimeoutSeconds) { this.verifierTimeoutSeconds = verifierTimeoutSeconds; }
+        public int getSynthesisTimeoutSeconds() { return synthesisTimeoutSeconds; }
+        public void setSynthesisTimeoutSeconds(int synthesisTimeoutSeconds) { this.synthesisTimeoutSeconds = synthesisTimeoutSeconds; }
     }
 
     /**
@@ -109,6 +128,46 @@ public class CouncilProperties {
         public void setEscalationContradictionThreshold(double v) { this.escalationContradictionThreshold = v; }
         public Map<String, ProviderRouteConfig> getProviderRoutes() { return providerRoutes; }
         public void setProviderRoutes(Map<String, ProviderRouteConfig> providerRoutes) { this.providerRoutes = providerRoutes; }
+    }
+
+    /**
+     * Self-correcting design agent configuration.
+     * All thresholds are externalized so they can be tuned without code changes.
+     */
+    public static class DesignAgentConfig {
+        private boolean enabled = true;
+        private int maxIterations = 5;
+        /** Minimum acceptable per-message latency (ms). */
+        private double minLatencyMs = 0.5;
+        /** Maximum acceptable sustained load per DLQ partition (msgs/sec). */
+        private double maxDlqLoadPerPartition = 1000.0;
+        /** Partitions-per-thousand-TPS rule numerator (1000 = 1 partition per 1000 TPS). */
+        private int partitionsPerTpsDivisor = 1000;
+        /** Tolerance for internal-consistency float comparisons. */
+        private double consistencyTolerance = 1e-6;
+        /** Headroom multiplier applied to repaired consumer pod counts (1.10 = +10 %). */
+        private double capacityHeadroomMultiplier = 1.10;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getMaxIterations() { return maxIterations; }
+        public void setMaxIterations(int maxIterations) { this.maxIterations = maxIterations; }
+        public double getMinLatencyMs() { return minLatencyMs; }
+        public void setMinLatencyMs(double minLatencyMs) { this.minLatencyMs = minLatencyMs; }
+        public double getMaxDlqLoadPerPartition() { return maxDlqLoadPerPartition; }
+        public void setMaxDlqLoadPerPartition(double v) { this.maxDlqLoadPerPartition = v; }
+        public int getPartitionsPerTpsDivisor() { return partitionsPerTpsDivisor; }
+        public void setPartitionsPerTpsDivisor(int partitionsPerTpsDivisor) {
+            this.partitionsPerTpsDivisor = partitionsPerTpsDivisor;
+        }
+        public double getConsistencyTolerance() { return consistencyTolerance; }
+        public void setConsistencyTolerance(double consistencyTolerance) {
+            this.consistencyTolerance = consistencyTolerance;
+        }
+        public double getCapacityHeadroomMultiplier() { return capacityHeadroomMultiplier; }
+        public void setCapacityHeadroomMultiplier(double capacityHeadroomMultiplier) {
+            this.capacityHeadroomMultiplier = capacityHeadroomMultiplier;
+        }
     }
 
     /**

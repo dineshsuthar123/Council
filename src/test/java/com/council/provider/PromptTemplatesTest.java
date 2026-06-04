@@ -1,10 +1,14 @@
 package com.council.provider;
 
+import com.council.model.CriticResult;
 import com.council.model.DraftResult;
+import com.council.model.VerifierBatchResult;
+import com.council.model.VerifierVerdict;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -86,11 +90,65 @@ class PromptTemplatesTest {
 
         String prompt = PromptTemplates.buildVerifierPrompt("Validate this architecture", draft);
 
-        assertTrue(prompt.contains("You are a mathematical calculator and constraint verifier"));
-        assertTrue(prompt.contains("containsFatalMathError"));
-        assertTrue(prompt.contains("containsConsistencyViolation"));
-        assertTrue(prompt.contains("fatalErrorReason"));
-        assertTrue(prompt.contains("Cassandra/MongoDB"));
+        assertTrue(prompt.contains("You are a FINAL CONSTRAINT ENFORCER"));
+        assertTrue(prompt.contains("You MUST ONLY decide VALID or REJECT"));
+        assertTrue(prompt.contains("RULE 1: THROUGHPUT LIMIT"));
+        assertTrue(prompt.contains("required_partitions = ceil(inputTPS / max_per_partition)"));
+        assertTrue(prompt.contains("RULE 2: DLQ CAPACITY"));
+        assertTrue(prompt.contains("dlq_load_per_partition = dlq_tps / dlq_partitions"));
+        assertTrue(prompt.contains("RULE 3: LATENCY REALITY"));
+        assertTrue(prompt.contains("RULE 4: INTERNAL CONSISTENCY"));
+        assertTrue(prompt.contains("RULE 5: FAIL FAST"));
+        assertTrue(prompt.contains("\"valid\""));
+        assertTrue(prompt.contains("\"reason\""));
+        assertTrue(prompt.contains("\"constraint violation\""));
+        assertTrue(prompt.contains("\"verdicts\""));
+        assertTrue(prompt.contains("\"drafts\""));
+        assertTrue(prompt.contains("\"id\""));
+        assertTrue(prompt.contains("\"content\""));
+        assertTrue(prompt.contains("ONLY PASS or REJECT"));
     }
+
+        @Test
+        @DisplayName("Synthesizer prompt contains merge rules and required JSON schema")
+        void buildSynthesizerPrompt_containsRulesAndSchema() {
+        List<DraftResult> drafts = List.of(
+            DraftResult.success("gemini", "gemini-2.5-pro",
+                "Use PostgreSQL ledger", "strong consistency",
+                List.of("single region"), List.of(), 0.91, 400, "raw-a"),
+            DraftResult.success("deepseek", "deepseek-chat",
+                "Use Kafka with retry jitter", "robust async processing",
+                List.of(), List.of("unknown peak"), 0.86, 450, "raw-b")
+        );
+
+        VerifierBatchResult verifier = VerifierBatchResult.success(Map.of(
+            "gemini", VerifierVerdict.passed(),
+            "deepseek", VerifierVerdict.passed()
+        ));
+
+        CriticResult critic = CriticResult.success(
+            "openrouter",
+            "nvidia/llama-3.1-nemotron-70b-instruct",
+            "Both drafts have value; combine ledger consistency with stronger failure handling.",
+            0.2,
+            Map.of("gemini", 0, "deepseek", 1),
+            List.of(),
+            List.of(),
+            List.of("throughput estimate is under-explained"),
+            300,
+            "raw-critic"
+        );
+
+        String prompt = PromptTemplates.buildSynthesizerPrompt("Design payment architecture", drafts, verifier, critic);
+
+        assertTrue(prompt.contains("You are the SYNTHESIZER"));
+        assertTrue(prompt.contains("Merge, do not vote"));
+        assertTrue(prompt.contains("Hard reject invalid content"));
+        assertTrue(prompt.contains("Resolve conflicts decisively"));
+        assertTrue(prompt.contains("synthesizedAnswer"));
+        assertTrue(prompt.contains("mergedStrengths"));
+        assertTrue(prompt.contains("discardedClaims"));
+        assertTrue(prompt.contains("confidence"));
+        }
 }
 

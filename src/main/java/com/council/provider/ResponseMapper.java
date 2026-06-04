@@ -3,6 +3,9 @@ package com.council.provider;
 import com.council.model.Contradiction;
 import com.council.model.CriticResult;
 import com.council.model.DraftResult;
+import com.council.model.SynthesisResult;
+import com.council.model.VerifierBatchResult;
+import com.council.model.VerifierVerdict;
 import com.council.model.VerifierResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
@@ -98,6 +101,126 @@ public class ResponseMapper {
                 node.path("containsFatalMathError").asBoolean(false),
                 node.path("containsConsistencyViolation").asBoolean(false),
                 reason
+        );
+    }
+
+    public VerifierBatchResult mapToVerifierBatchResult(JsonNode node, List<DraftResult> expectedDrafts) {
+        Map<String, VerifierVerdict> verdicts = new LinkedHashMap<>();
+        JsonNode verdictsNode = node.path("verdicts");
+
+        if (verdictsNode.isObject()) {
+            verdictsNode.fields().forEachRemaining(entry ->
+                    verdicts.put(entry.getKey(), mapToVerifierVerdict(entry.getValue())));
+        }
+
+        // Ensure we have one verdict per expected provider key (fail-open default).
+        if (expectedDrafts != null) {
+            for (DraftResult draft : expectedDrafts) {
+                verdicts.putIfAbsent(draft.provider(), VerifierVerdict.passed());
+            }
+        }
+
+        return VerifierBatchResult.success(verdicts);
+    }
+
+    private VerifierVerdict mapToVerifierVerdict(JsonNode node) {
+        // Backward compatibility for older verifier schema.
+        if (node.has("containsFatalMathError")
+            || node.has("containsConsistencyViolation")
+            || node.has("containsThroughputContradiction")
+            || node.has("fatalErrorReason")) {
+            String reason = node.path("fatalErrorReason").isNull()
+                ? null
+                : node.path("fatalErrorReason").asText(null);
+            if (reason != null && reason.isBlank()) {
+            reason = null;
+            }
+
+            return new VerifierVerdict(
+                node.path("containsFatalMathError").asBoolean(false),
+                node.path("containsConsistencyViolation").asBoolean(false),
+                node.path("containsThroughputContradiction").asBoolean(false),
+                reason
+            );
+        }
+
+        if (isFinalConstraintVerdict(node)) {
+            boolean valid = node.path("valid").asBoolean(false);
+            String reason = node.path("reason").isNull()
+                    ? null
+                    : node.path("reason").asText(null);
+            if (reason != null && reason.isBlank()) {
+                reason = null;
+            }
+
+            if (valid) {
+                return VerifierVerdict.passed();
+            }
+
+            return new VerifierVerdict(
+                    false,
+                    true,
+                    false,
+                    reason == null ? "constraint violation" : reason
+            );
+        }
+
+        boolean valid = node.path("valid").asBoolean(false);
+        boolean fatal = node.path("fatal").asBoolean(false);
+
+        boolean mathAllOk = node.path("math").path("allOk").asBoolean(true);
+
+        boolean throughputValid = node.path("consistency").path("throughputValid").asBoolean(true);
+        boolean storageValid = node.path("consistency").path("storageValid").asBoolean(true);
+        boolean latencyValid = node.path("consistency").path("latencyValid").asBoolean(true);
+
+        List<String> errors = jsonArrayToList(node.path("errors"));
+        String reason = errors.isEmpty() ? null : String.join("; ", errors);
+
+        boolean containsFatalMathError = fatal && !mathAllOk;
+        boolean containsThroughputContradiction = !throughputValid;
+        boolean containsConsistencyViolation = !storageValid || !latencyValid || !valid;
+
+        if (reason == null && (containsFatalMathError || containsThroughputContradiction || containsConsistencyViolation)) {
+            reason = "Verifier marked draft invalid";
+        }
+
+        return new VerifierVerdict(
+            containsFatalMathError,
+            containsConsistencyViolation,
+            containsThroughputContradiction,
+                reason
+        );
+    }
+
+    private boolean isFinalConstraintVerdict(JsonNode node) {
+        return node != null
+                && node.isObject()
+                && node.has("valid")
+                && !node.has("fatal")
+                && !node.has("math")
+                && !node.has("consistency")
+                && !node.has("errors");
+    }
+
+    public SynthesisResult mapToSynthesisResult(String provider,
+                                                String model,
+                                                JsonNode node,
+                                                String rawResponse,
+                                                long latencyMs) {
+        return SynthesisResult.success(
+                provider,
+                model,
+                node.path("synthesizedAnswer").asText(""),
+                node.path("summary").asText(""),
+                jsonArrayToList(node.path("decisions")),
+                jsonArrayToList(node.path("mergedStrengths")),
+                jsonArrayToList(node.path("discardedClaims")),
+                jsonArrayToList(node.path("assumptions")),
+                jsonArrayToList(node.path("uncertainties")),
+                node.path("confidence").asDouble(0.0),
+                latencyMs,
+                rawResponse
         );
     }
 

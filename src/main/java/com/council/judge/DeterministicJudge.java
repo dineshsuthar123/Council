@@ -41,14 +41,14 @@ public class DeterministicJudge {
      * Evaluate drafts and return a ranking with the winning provider.
      */
     public JudgeResult evaluate(List<DraftResult> drafts, CriticResult criticResult) {
-        return evaluate(drafts, criticResult, Map.of(), TaskType.GENERAL_REASONING);
+        return evaluate(drafts, criticResult, VerifierBatchResult.passedFor(drafts), TaskType.GENERAL_REASONING);
     }
 
     /**
      * Task-aware evaluation of drafts.
      */
     public JudgeResult evaluate(List<DraftResult> drafts, CriticResult criticResult, TaskType taskType) {
-        return evaluate(drafts, criticResult, Map.of(), taskType);
+        return evaluate(drafts, criticResult, VerifierBatchResult.passedFor(drafts), taskType);
     }
 
     /**
@@ -56,22 +56,23 @@ public class DeterministicJudge {
      */
     public JudgeResult evaluate(List<DraftResult> drafts,
                                 CriticResult criticResult,
-                                Map<String, VerifierResult> verifierResults,
+                                VerifierBatchResult verifierBatchResult,
                                 TaskType taskType) {
         if (drafts == null || drafts.isEmpty()) {
             log.warn("[judge] No valid drafts to evaluate");
             return JudgeResult.noValidDrafts();
         }
 
-        Map<String, VerifierResult> safeVerifierResults =
-                verifierResults == null ? Map.of() : verifierResults;
+        VerifierBatchResult safeVerifierBatch = verifierBatchResult == null
+                ? VerifierBatchResult.passedFor(drafts)
+                : verifierBatchResult;
 
         if (drafts.size() == 1) {
             DraftResult only = drafts.getFirst();
             log.info("[judge] Single draft – auto-selecting {}", only.provider());
             boolean criticAvailable = criticResult != null && criticResult.isSuccess();
-            VerifierResult verifierResult = safeVerifierResults.get(only.provider());
-            boolean disqualified = isVerifierDisqualified(verifierResult);
+            VerifierVerdict verifierVerdict = safeVerifierBatch.verdictForProvider(only.provider());
+            boolean disqualified = isVerifierDisqualified(verifierVerdict);
             double score = disqualified
                     ? 0.0
                     : scoreDraft(only, criticAvailable ? criticResult : null);
@@ -79,7 +80,7 @@ public class DeterministicJudge {
             String reason;
             if (disqualified) {
                 reason = "Only one valid draft available, but it was disqualified by Verifier. "
-                        + verifierReason(verifierResult);
+                        + verifierReason(verifierVerdict);
             } else if (criticAvailable) {
                 reason = "Only one valid draft available. Applied weighted critic formula "
                         + "(mathCorrectnessScore=%.2f, feasibilityScore=%.2f, failureDepthScore=%.2f, confidence=%.2f)."
@@ -103,16 +104,18 @@ public class DeterministicJudge {
             log.info("[judge] Critic unavailable – confidence-only fallback scoring");
         }
 
-        // Score each draft
+        // Apply the verifier guillotine before any weighted scoring.
         Map<String, Double> scores = new LinkedHashMap<>();
         Map<String, String> verifierDisqualifications = new LinkedHashMap<>();
         for (DraftResult draft : drafts) {
-            VerifierResult verifierResult = safeVerifierResults.get(draft.provider());
-            if (isVerifierDisqualified(verifierResult)) {
+            VerifierVerdict verifierVerdict = safeVerifierBatch.verdictForProvider(draft.provider());
+            if (isVerifierDisqualified(verifierVerdict)) {
                 scores.put(draft.provider(), 0.0);
-                verifierDisqualifications.put(draft.provider(), verifierReason(verifierResult));
+                verifierDisqualifications.put(draft.provider(), verifierReason(verifierVerdict));
                 continue;
             }
+
+            // Standard weighted scoring applies only to drafts that pass verifier checks.
             scores.put(draft.provider(), scoreDraft(draft, criticAvailable ? criticResult : null));
         }
 
@@ -125,7 +128,7 @@ public class DeterministicJudge {
                 .orElse(drafts.getFirst());
 
         String reason = buildExplanation(rankings, drafts, criticResult, criticAvailable,
-            taskType, verifierDisqualifications);
+                taskType, verifierDisqualifications);
         log.info("[judge] Winner: {} (score={}) taskType={}", winner.provider(), winner.score(), taskType);
 
         return new JudgeResult(
@@ -135,6 +138,29 @@ public class DeterministicJudge {
                 reason,
                 rankings
         );
+    }
+
+    /**
+     * Backward-compatible overload (map-based verifier results).
+     */
+    public JudgeResult evaluate(List<DraftResult> drafts,
+                                CriticResult criticResult,
+                                Map<String, VerifierResult> verifierResults,
+                                TaskType taskType) {
+        Map<String, VerifierVerdict> verdicts = new LinkedHashMap<>();
+        if (verifierResults != null) {
+            verifierResults.forEach((provider, result) -> {
+                if (result != null) {
+                    verdicts.put(provider, new VerifierVerdict(
+                            result.containsFatalMathError(),
+                            result.containsConsistencyViolation(),
+                            false,
+                            result.fatalErrorReason()
+                    ));
+                }
+            });
+        }
+        return evaluate(drafts, criticResult, VerifierBatchResult.success(verdicts), taskType);
     }
 
     /**
@@ -273,18 +299,17 @@ public class DeterministicJudge {
                         runnerUp.score());
     }
 
-    private boolean isVerifierDisqualified(VerifierResult verifierResult) {
-        return verifierResult != null
-                && (verifierResult.containsFatalMathError() || verifierResult.containsConsistencyViolation());
+    private boolean isVerifierDisqualified(VerifierVerdict verifierVerdict) {
+        return verifierVerdict != null && verifierVerdict.isDisqualified();
     }
 
-    private String verifierReason(VerifierResult verifierResult) {
-        if (verifierResult == null) {
+    private String verifierReason(VerifierVerdict verifierVerdict) {
+        if (verifierVerdict == null) {
             return "Verifier flagged disqualification without details.";
         }
-        String reason = verifierResult.fatalErrorReason();
+        String reason = verifierVerdict.fatalErrorReason();
         if (reason == null || reason.isBlank()) {
-            return "Verifier flagged a fatal math/consistency violation.";
+            return "Verifier flagged a fatal math/consistency/throughput violation.";
         }
         return reason;
     }

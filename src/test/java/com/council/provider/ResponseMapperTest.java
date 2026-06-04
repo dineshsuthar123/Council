@@ -3,11 +3,15 @@ package com.council.provider;
 import com.council.model.Contradiction;
 import com.council.model.CriticResult;
 import com.council.model.DraftResult;
+import com.council.model.SynthesisResult;
+import com.council.model.VerifierBatchResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -150,5 +154,129 @@ class ResponseMapperTest {
         assertTrue(mapper.jsonArrayToList(objectMapper.readTree("42")).isEmpty());
         assertEquals(2, mapper.jsonArrayToList(objectMapper.readTree("[\"a\",\"b\"]")).size());
     }
+
+    @Test
+    @DisplayName("mapToVerifierBatchResult extracts per-provider verdicts with throughput contradiction")
+    void mapToVerifierBatchResult_allFields() throws Exception {
+        String json = """
+                {
+                  "verdicts": {
+                    "deepseek": {
+                      "valid": false,
+                      "fatal": true,
+                      "math": {
+                        "steps": [
+                          {
+                            "op": "multiply",
+                            "a": 50000,
+                            "b": 86400,
+                            "result": 111,
+                            "ok": false
+                          }
+                        ],
+                        "allOk": false
+                      },
+                      "consistency": {
+                        "throughputValid": false,
+                        "storageValid": true,
+                        "latencyValid": true
+                      },
+                      "errors": ["50k TPS exceeds partition processing capacity"]
+                    },
+                    "gemini": {
+                      "valid": true,
+                      "fatal": false,
+                      "math": {
+                        "steps": [
+                          {
+                            "op": "add",
+                            "a": 1,
+                            "b": 2,
+                            "result": 3,
+                            "ok": true
+                          }
+                        ],
+                        "allOk": true
+                      },
+                      "consistency": {
+                        "throughputValid": true,
+                        "storageValid": true,
+                        "latencyValid": true
+                      },
+                      "errors": []
+                    }
+                  }
+                }
+                """;
+        JsonNode node = objectMapper.readTree(json);
+
+        VerifierBatchResult result = mapper.mapToVerifierBatchResult(node, List.of(
+                DraftResult.success("deepseek", "m1", "a", "s", List.of(), List.of(), 0.9, 10, "raw"),
+                DraftResult.success("gemini", "m2", "a", "s", List.of(), List.of(), 0.9, 10, "raw")
+        ));
+
+        assertTrue(result.verdictForProvider("deepseek").containsThroughputContradiction());
+  assertTrue(result.verdictForProvider("deepseek").containsFatalMathError());
+        assertFalse(result.verdictForProvider("gemini").containsThroughputContradiction());
+        assertEquals("50k TPS exceeds partition processing capacity",
+                result.verdictForProvider("deepseek").fatalErrorReason());
+    }
+
+    @Test
+    @DisplayName("mapToVerifierBatchResult supports final enforcer pass/reject schema")
+    void mapToVerifierBatchResult_finalEnforcerSchema() throws Exception {
+        String json = """
+                {
+                  "verdicts": {
+                    "deepseek": {
+                      "valid": false,
+                      "reason": "constraint violation"
+                    },
+                    "gemini": {
+                      "valid": true
+                    }
+                  }
+                }
+                """;
+        JsonNode node = objectMapper.readTree(json);
+
+        VerifierBatchResult result = mapper.mapToVerifierBatchResult(node, List.of(
+                DraftResult.success("deepseek", "m1", "a", "s", List.of(), List.of(), 0.9, 10, "raw"),
+                DraftResult.success("gemini", "m2", "a", "s", List.of(), List.of(), 0.9, 10, "raw")
+        ));
+
+        assertTrue(result.verdictForProvider("deepseek").containsConsistencyViolation());
+        assertEquals("constraint violation", result.verdictForProvider("deepseek").fatalErrorReason());
+        assertFalse(result.verdictForProvider("gemini").containsConsistencyViolation());
+    }
+
+      @Test
+      @DisplayName("mapToSynthesisResult extracts synthesized payload fields")
+      void mapToSynthesisResult_allFields() throws Exception {
+        String json = """
+            {
+              "synthesizedAnswer": "Final architecture with validated math and retries.",
+              "summary": "Use Postgres ledger and Kafka-driven async workers.",
+              "decisions": ["PostgreSQL ledger", "Kafka queue"],
+              "mergedStrengths": ["Exact throughput math", "Strong failure mitigation"],
+              "discardedClaims": ["Cassandra as core ledger"],
+              "assumptions": ["Single-region deployment"],
+              "uncertainties": ["Peak burst beyond tested limits"],
+              "confidence": 0.86
+            }
+            """;
+        JsonNode node = objectMapper.readTree(json);
+
+        SynthesisResult result = mapper.mapToSynthesisResult(
+            "openrouter", "nvidia/llama-3.1-nemotron-70b-instruct", node, "raw-synthesis", 620);
+
+        assertTrue(result.isSuccess());
+        assertEquals("Final architecture with validated math and retries.", result.synthesizedAnswer());
+        assertEquals("Use Postgres ledger and Kafka-driven async workers.", result.summary());
+        assertEquals(2, result.decisions().size());
+        assertEquals(0.86, result.confidence(), 0.001);
+        assertEquals(620, result.latencyMs());
+        assertEquals("raw-synthesis", result.rawResponse());
+      }
 }
 

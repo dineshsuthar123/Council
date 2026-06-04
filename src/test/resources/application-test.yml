@@ -121,11 +121,15 @@ council:
       max-tokens: 512
   critic:
     provider: openrouter
+  synthesizer:
+    provider: openrouter
   orchestrator:
     max-retries: 1
     cooldown-minutes: 1
     consecutive-429-threshold: 3
     draft-timeout-seconds: 10
     critic-timeout-seconds: 10
+    verifier-timeout-seconds: 5
+    synthesis-timeout-seconds: 5
   routing:
     enabled: false

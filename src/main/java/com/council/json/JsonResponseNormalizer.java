@@ -9,8 +9,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.function.Function;
 
 /**
@@ -24,16 +22,8 @@ import java.util.function.Function;
 public class JsonResponseNormalizer {
 
     private static final Logger log = LoggerFactory.getLogger(JsonResponseNormalizer.class);
-
-    private static final Pattern MISSING_COMMA_AFTER_STRING_VALUE = Pattern.compile(
-        "(\\\"\\s*:\\s*\\\"(?:[^\\\"\\\\]|\\\\.)*\\\")\\s+(?=\\\")"
-    );
-    private static final Pattern MISSING_COMMA_AFTER_NUMBER_VALUE = Pattern.compile(
-        "(\\\"\\s*:\\s*-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)\\s+(?=\\\")"
-    );
-    private static final Pattern MISSING_COMMA_AFTER_LITERAL_VALUE = Pattern.compile(
-        "(\\\"\\s*:\\s*(?:true|false|null))\\s+(?=\\\")"
-    );
+    private static final int MAX_RAW_INPUT_CHARS = 1_000_000;
+    private static final int ERROR_FRAGMENT_CHARS = 4_000;
 
     private final ObjectMapper mapper;
     private final JsonExtractor extractor;
@@ -68,11 +58,31 @@ public class JsonResponseNormalizer {
         return normalize(provider, raw, validator::validateVerifier);
     }
 
+    /**
+     * Normalize a raw batch verifier response into a validated {@link JsonNode}.
+     */
+    public JsonNode normalizeVerifierBatch(String provider, String raw) {
+        return normalize(provider, raw, validator::validateVerifierBatch);
+    }
+
+    /**
+     * Normalize a raw synthesis response into a validated {@link JsonNode}.
+     */
+    public JsonNode normalizeSynthesis(String provider, String raw) {
+        return normalize(provider, raw, validator::validateSynthesis);
+    }
+
     /* ── core pipeline ─────────────────────────────────────────────── */
 
     private JsonNode normalize(String provider, String raw, Function<JsonNode, List<String>> schemaCheck) {
         if (raw == null || raw.isBlank()) {
             throw new JsonNormalizationException(provider, "Empty response", raw);
+        }
+
+        if (raw.length() > MAX_RAW_INPUT_CHARS) {
+            throw new JsonNormalizationException(provider,
+                    "Response exceeds max allowed length: " + MAX_RAW_INPUT_CHARS,
+                    truncateForError(raw));
         }
 
         String trimmed = raw.strip();
@@ -103,7 +113,7 @@ public class JsonResponseNormalizer {
         // 5. still null -> fail
         if (node == null) {
             throw new JsonNormalizationException(provider,
-                    "Unable to extract valid JSON from provider response", raw);
+                    "Unable to extract valid JSON from provider response", truncateForError(raw));
         }
 
         // 6. schema validation
@@ -139,23 +149,82 @@ public class JsonResponseNormalizer {
      * Example: {"a":1 "b":2} -> {"a":1, "b":2}
      */
     private String repairMissingCommasBetweenPrimitiveFields(String text) {
-        String repaired = text;
-        repaired = insertMissingCommas(repaired, MISSING_COMMA_AFTER_STRING_VALUE);
-        repaired = insertMissingCommas(repaired, MISSING_COMMA_AFTER_NUMBER_VALUE);
-        repaired = insertMissingCommas(repaired, MISSING_COMMA_AFTER_LITERAL_VALUE);
-        return repaired;
-    }
-
-    private String insertMissingCommas(String input, Pattern pattern) {
-        String current = input;
+        String current = text;
         for (int i = 0; i < 3; i++) {
-            Matcher matcher = pattern.matcher(current);
-            String next = matcher.replaceAll("$1, ");
+            String next = insertMissingCommasWithoutRegex(current);
             if (next.equals(current)) {
                 break;
             }
             current = next;
         }
         return current;
+    }
+
+    private String insertMissingCommasWithoutRegex(String input) {
+        StringBuilder out = new StringBuilder(input.length() + 32);
+
+        boolean inString = false;
+        boolean escaped = false;
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+
+            if (inString) {
+                out.append(c);
+                if (escaped) {
+                    escaped = false;
+                    continue;
+                }
+                if (c == '\\') {
+                    escaped = true;
+                    continue;
+                }
+                if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (c == '"') {
+                char previous = previousNonWhitespace(out);
+                if (shouldInsertCommaBeforeQuote(previous)) {
+                    out.append(',');
+                    out.append(' ');
+                }
+                inString = true;
+                out.append(c);
+                continue;
+            }
+
+            out.append(c);
+        }
+        return out.toString();
+    }
+
+    private char previousNonWhitespace(CharSequence value) {
+        for (int i = value.length() - 1; i >= 0; i--) {
+            char c = value.charAt(i);
+            if (!Character.isWhitespace(c)) {
+                return c;
+            }
+        }
+        return '\0';
+    }
+
+    private boolean shouldInsertCommaBeforeQuote(char previous) {
+        if (previous == '\0') {
+            return false;
+        }
+        if (previous == '{' || previous == '[' || previous == ',' || previous == ':') {
+            return false;
+        }
+        return true;
+    }
+
+    private String truncateForError(String raw) {
+        if (raw == null || raw.length() <= ERROR_FRAGMENT_CHARS) {
+            return raw;
+        }
+        return raw.substring(0, ERROR_FRAGMENT_CHARS);
     }
 }

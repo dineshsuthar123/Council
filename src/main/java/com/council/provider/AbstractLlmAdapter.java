@@ -127,19 +127,39 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
 
     @Override
     public VerifierResult generateVerification(VerifierRequest request) {
+        VerifierBatchResult batch = generateBatchVerification(new VerifierBatchRequest(
+                request.traceId(),
+                request.userQuery(),
+                java.util.List.of(request.draft())
+        ));
+
+        if (batch.isInternalError()) {
+            return VerifierResult.internalError(batch.internalErrorReason());
+        }
+
+        VerifierVerdict verdict = batch.verdictForProvider(request.draft().provider());
+        return new VerifierResult(
+                verdict.containsFatalMathError(),
+                verdict.containsConsistencyViolation(),
+                verdict.fatalErrorReason()
+        );
+    }
+
+    @Override
+    public VerifierBatchResult generateBatchVerification(VerifierBatchRequest request) {
         long start = System.currentTimeMillis();
         MDC.put(CouncilConstants.MDC_PROVIDER, provider);
         MDC.put(CouncilConstants.MDC_TRACE_ID, request.traceId());
         try {
-            String prompt = PromptTemplates.buildVerifierPrompt(request.userQuery(), request.draft());
+            String prompt = PromptTemplates.buildVerifierPrompt(request.userQuery(), request.drafts());
             String rawResponse = callExecutor.execute(provider, () -> callApi(prompt));
             long latency = System.currentTimeMillis() - start;
 
-            JsonNode node = normalizer.normalizeVerifier(provider, rawResponse);
-            VerifierResult result = responseMapper.mapToVerifierResult(node);
+            JsonNode node = normalizer.normalizeVerifierBatch(provider, rawResponse);
+            VerifierBatchResult result = responseMapper.mapToVerifierBatchResult(node, request.drafts());
 
             metrics.recordProviderCall(provider, "SUCCESS", latency);
-            log.info("[{}] Verifier result generated in {}ms", provider, latency);
+            log.info("[{}] Verifier batch result generated in {}ms", provider, latency);
             return result;
 
         } catch (Exception e) {
@@ -148,8 +168,44 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
             if (e instanceof JsonNormalizationException) {
                 metrics.recordInvalidJson(provider);
             }
-            log.warn("[{}] Verification failed after {}ms: {}", provider, latency, e.getMessage());
-            return VerifierResult.internalError(e.getMessage());
+            log.warn("[{}] Batch verification failed after {}ms: {}", provider, latency, e.getMessage());
+            return VerifierBatchResult.internalError(e.getMessage());
+        } finally {
+            MDC.remove(CouncilConstants.MDC_PROVIDER);
+        }
+    }
+
+    @Override
+    public SynthesisResult generateSynthesis(SynthesisRequest request) {
+        long start = System.currentTimeMillis();
+        MDC.put(CouncilConstants.MDC_PROVIDER, provider);
+        MDC.put(CouncilConstants.MDC_TRACE_ID, request.traceId());
+        try {
+            String prompt = PromptTemplates.buildSynthesizerPrompt(
+                    request.userQuery(),
+                    request.drafts(),
+                    request.verifierBatchResult(),
+                    request.criticResult());
+
+            String rawResponse = callExecutor.execute(provider, () -> callApi(prompt));
+            long latency = System.currentTimeMillis() - start;
+
+            JsonNode node = normalizer.normalizeSynthesis(provider, rawResponse);
+            SynthesisResult result = responseMapper.mapToSynthesisResult(
+                    provider, config.getModel(), node, rawResponse, latency);
+
+            metrics.recordProviderCall(provider, "SUCCESS", latency);
+            log.info("[{}] Synthesis generated in {}ms", provider, latency);
+            return result;
+
+        } catch (Exception e) {
+            long latency = System.currentTimeMillis() - start;
+            metrics.recordProviderCall(provider, "FAILURE", latency);
+            if (e instanceof JsonNormalizationException) {
+                metrics.recordInvalidJson(provider);
+            }
+            log.warn("[{}] Synthesis failed after {}ms: {}", provider, latency, e.getMessage());
+            return SynthesisResult.failure(provider, config.getModel(), e.getMessage(), latency);
         } finally {
             MDC.remove(CouncilConstants.MDC_PROVIDER);
         }

@@ -4,6 +4,10 @@ import com.council.model.CriticRequest;
 import com.council.model.CriticResult;
 import com.council.model.DraftRequest;
 import com.council.model.DraftResult;
+import com.council.model.SynthesisRequest;
+import com.council.model.SynthesisResult;
+import com.council.model.VerifierBatchRequest;
+import com.council.model.VerifierBatchResult;
 import com.council.model.VerifierRequest;
 import com.council.model.VerifierResult;
 
@@ -33,6 +37,23 @@ public interface LlmAdapter {
      */
     default VerifierResult generateVerification(VerifierRequest request) {
         return VerifierResult.internalError("Verification is not implemented by adapter " + providerName());
+    }
+
+    /**
+     * Generate verifier verdicts for all successful drafts in a single batch call.
+     * Default implementation is fail-open so legacy adapters still compile.
+     */
+    default VerifierBatchResult generateBatchVerification(VerifierBatchRequest request) {
+        return VerifierBatchResult.internalError(
+                "Batch verification is not implemented by adapter " + providerName());
+    }
+
+    /**
+     * Generate a synthesized final answer from all validated drafts.
+     */
+    default SynthesisResult generateSynthesis(SynthesisRequest request) {
+        return SynthesisResult.failure(providerName(), modelName(),
+                "Synthesis is not implemented by adapter " + providerName(), 0);
     }
 }
 
