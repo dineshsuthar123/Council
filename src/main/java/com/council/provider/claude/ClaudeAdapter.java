@@ -1,33 +1,29 @@
 package com.council.provider.claude;
 
-import com.council.common.exception.ProviderException;
-import com.council.common.exception.RateLimitException;
 import com.council.config.CouncilProperties;
 import com.council.config.RestClientFactory;
 import com.council.json.JsonResponseNormalizer;
 import com.council.metrics.OrchestrationMetrics;
-import com.council.provider.AbstractLlmAdapter;
 import com.council.provider.ProviderCallExecutor;
 import com.council.provider.ResponseMapper;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.council.provider.openai.OpenAiCompatibleAdapter;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.http.HttpStatusCode;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestClient;
 
-import java.util.List;
 import java.util.Map;
 
 /**
- * Adapter for the Anthropic Claude API.
+ * Adapter for Claude models routed through BLACKBOX AI's OpenAI-compatible API.
+ *
+ * The provider key intentionally remains "claude" so existing routing, metrics,
+ * and tests continue to identify this as the Claude-quality slot. The
+ * credential is supplied through CLAUDE_API_KEY, but the API host is Blackbox AI,
+ * not Anthropic.
  */
 @Component
-public class ClaudeAdapter extends AbstractLlmAdapter {
+public class ClaudeAdapter extends OpenAiCompatibleAdapter {
 
     private static final String PROVIDER = "claude";
-    private final RestClient restClient;
 
     public ClaudeAdapter(CouncilProperties properties,
                          ObjectMapper mapper,
@@ -36,69 +32,8 @@ public class ClaudeAdapter extends AbstractLlmAdapter {
                          ProviderCallExecutor callExecutor,
                          OrchestrationMetrics metrics,
                          RestClientFactory restClientFactory) {
-        super(PROVIDER, properties, mapper, normalizer, responseMapper, callExecutor, metrics);
-
-        if (config.isUsable()) {
-            this.restClient = restClientFactory.create(
-                    config.getBaseUrl(),
-                    config.getTimeoutSeconds(),
-                    Map.of("x-api-key", config.getApiKey(),
-                           "anthropic-version", "2023-06-01"));
-        } else {
-            this.restClient = null;
-        }
-    }
-
-    @Override
-    protected String callApi(String prompt) {
-        if (restClient == null) {
-            throw new ProviderException(PROVIDER, "Claude adapter is not configured");
-        }
-        try {
-            Map<String, Object> body = Map.of(
-                    "model", config.getModel(),
-                    "max_tokens", config.getMaxTokens(),
-                    "messages", List.of(Map.of("role", "user", "content", prompt))
-            );
-
-            String responseBody = restClient.post()
-                    .uri("/v1/messages")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
-                    .retrieve()
-                    .onStatus(status -> status.value() == 429, (req, resp) -> {
-                        throw new RateLimitException(PROVIDER);
-                    })
-                    .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
-                        throw new ProviderException(PROVIDER,
-                                "Server error " + resp.getStatusCode());
-                    })
-                    .body(String.class);
-
-            return extractText(responseBody);
-
-        } catch (ProviderException e) {
-            throw e;
-        } catch (ResourceAccessException e) {
-            throw new ProviderException(PROVIDER, "Network/timeout error: " + e.getMessage(), e);
-        } catch (Exception e) {
-            throw new ProviderException(PROVIDER, "Unexpected error: " + e.getMessage(), e);
-        }
-    }
-
-    private String extractText(String responseBody) {
-        try {
-            JsonNode root = mapper.readTree(responseBody);
-            JsonNode content = root.path("content");
-            if (content.isArray() && !content.isEmpty()) {
-                return content.get(0).path("text").asText("");
-            }
-            throw new ProviderException(PROVIDER, "No content in Claude response");
-        } catch (ProviderException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new ProviderException(PROVIDER, "Failed to parse Claude response: " + e.getMessage(), e);
-        }
+        super(PROVIDER, properties, mapper, normalizer, responseMapper, callExecutor, metrics,
+                restClientFactory, Map.of());
     }
 }
 

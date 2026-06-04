@@ -59,7 +59,7 @@ council:
       enabled: false
       api-key: test-key
       base-url: http://localhost:19081
-      model: claude-test
+      model: blackboxai/anthropic/claude-sonnet-test
       timeout-seconds: 5
       reliability: 0.90
       max-tokens: 512

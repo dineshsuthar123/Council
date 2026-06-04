@@ -26,6 +26,7 @@ public class VerifierEngine {
             "openrouter-qwen", // qwen-2.5-72b
             "nvidia-deepseek", // deepseek-v3.x via NVIDIA
             "deepseek",
+            "claude",
             "groq",
             "gemini",
             "nvidia"

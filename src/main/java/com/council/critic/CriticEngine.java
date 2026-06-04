@@ -21,7 +21,7 @@ import java.util.*;
  * Otherwise falls back to the legacy preferred-provider approach.
  * <p>
  * <b>Aggressive fallback:</b> If the primary critic fails, tries a hardcoded chain
- * of strong reasoning providers (gemini → deepseek → mistral → kimi) so that
+ * of strong reasoning providers (claude → gemini → deepseek → mistral → kimi) so that
  * the critic is almost never absent for important prompts.
  */
 @Service
@@ -34,7 +34,7 @@ public class CriticEngine {
      * These are tried in order if the primary critic selection fails or errors out.
      */
     private static final List<String> CRITIC_FALLBACK_CHAIN =
-            List.of("gemini", "deepseek", "mistral", "kimi");
+            List.of("claude", "gemini", "deepseek", "mistral", "kimi");
 
     private final ProviderRegistry registry;
     private final ProviderSelectionStrategy selectionStrategy;
