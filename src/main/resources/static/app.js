@@ -1,12 +1,46 @@
 const API_BASE = "/api/v1";
 
 const pipelineSteps = [
-  ["route", "Task routing", "Classifies the prompt and selects provider roles."],
+  ["classify", "Task classification", "Identifies the work type and verification posture."],
+  ["route", "Task routing", "Selects provider roles and fallback paths."],
   ["draft", "Parallel drafts", "Collects independent candidate answers."],
-  ["critic", "Critic pass", "Finds contradictions, weak assumptions, and gaps."],
-  ["verifier", "Verifier pass", "Checks design and capacity claims with workflow-aware enforcement."],
+  ["review", "Critic and verifier", "Checks contradictions, assumptions, constraints, and confidence."],
+  ["verify", "Constraint filter", "Applies enforced or advisory verifier verdicts by workflow type."],
+  ["judge", "Deterministic judge", "Ranks valid candidates with task-aware weights."],
   ["synthesis", "Synthesis", "Combines the strongest evidence into one answer."],
   ["trace", "Trace persistence", "Stores the full audit trail for inspection."]
+];
+
+const phaseIndex = {
+  ACCEPTED: 0,
+  START: 0,
+  CLASSIFY: 0,
+  ROUTE: 1,
+  DRAFT: 2,
+  REVIEW: 3,
+  VERIFY: 4,
+  JUDGE: 5,
+  ESCALATE: 5,
+  SYNTHESIS: 6,
+  TRACE: 7,
+  COMPLETE: 7,
+  ERROR: 7
+};
+
+const streamedPhases = [
+  "ACCEPTED",
+  "START",
+  "CLASSIFY",
+  "ROUTE",
+  "DRAFT",
+  "REVIEW",
+  "VERIFY",
+  "JUDGE",
+  "ESCALATE",
+  "SYNTHESIS",
+  "TRACE",
+  "COMPLETE",
+  "ERROR"
 ];
 
 const state = {
@@ -14,7 +48,9 @@ const state = {
   runStartedAt: null,
   currentTraceId: null,
   selectedMode: "balanced",
-  phaseTimer: null
+  phaseTimer: null,
+  eventSource: null,
+  pipelineStatuses: new Map()
 };
 
 const els = {
@@ -75,28 +111,48 @@ async function runCouncil(event) {
   setRunning(true);
   state.runStartedAt = performance.now();
   state.currentTraceId = null;
+  state.pipelineStatuses = new Map();
   renderLoadingAnswer(query);
-  animatePipeline();
+  renderPipeline("running", 0);
 
   try {
-    const response = await fetchJson(`${API_BASE}/reason`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query })
-    });
-
-    state.currentTraceId = response.traceId;
-    renderPipeline(response.error ? "failed" : "done");
-    renderAnswer(response);
-
-    await Promise.all([loadProviders(), loadTraces(), loadHealth()]);
+    if ("EventSource" in window) {
+      await runCouncilStream(query);
+    } else {
+      await runCouncilSync(query);
+    }
   } catch (error) {
     renderPipeline("failed");
     renderError(error.message || "Council request failed.");
     toast(error.message || "Council request failed.", true);
-  } finally {
     setRunning(false);
   }
+}
+
+async function runCouncilStream(query) {
+  const run = await fetchJson(`${API_BASE}/reason/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query })
+  });
+
+  state.currentTraceId = run.traceId;
+  attachEventStream(run.eventsUrl);
+}
+
+async function runCouncilSync(query) {
+  animatePipeline();
+  const response = await fetchJson(`${API_BASE}/reason`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query })
+  });
+
+  state.currentTraceId = response.traceId;
+  renderPipeline(response.error ? "failed" : "done");
+  renderAnswer(response);
+  await Promise.all([loadProviders(), loadTraces(), loadHealth()]);
+  setRunning(false);
 }
 
 function setRunning(running) {
@@ -107,6 +163,97 @@ function setRunning(running) {
   if (!running) {
     clearInterval(state.phaseTimer);
     state.phaseTimer = null;
+    closeEventStream();
+  }
+}
+
+function attachEventStream(eventsUrl) {
+  closeEventStream();
+  const source = new EventSource(eventsUrl);
+  state.eventSource = source;
+
+  streamedPhases.forEach((phase) => {
+    source.addEventListener(phase, (event) => handlePipelineEvent(JSON.parse(event.data)));
+  });
+
+  source.onerror = () => {
+    if (state.running) {
+      closeEventStream();
+      renderPipeline("failed");
+      renderError("Live event stream disconnected before the run completed.");
+      toast("Live event stream disconnected.", true);
+      setRunning(false);
+    }
+  };
+}
+
+function handlePipelineEvent(event) {
+  const phase = event.phase || "START";
+  const index = phaseIndex[phase] ?? 0;
+  state.pipelineStatuses.set(index, event.status || "running");
+  renderPipelineFromEvents(index);
+
+  if (event.elapsedMs != null) {
+    els.latency.textContent = `${event.elapsedMs} ms`;
+  }
+
+  if (event.message) {
+    updateLoadingMessage(event.message);
+  }
+
+  if (phase === "COMPLETE") {
+    const response = event.details && event.details.response;
+    renderPipeline("done");
+    if (response) {
+      renderAnswer(response);
+    } else {
+      renderError("Run completed but did not include a final response.");
+    }
+    setRunning(false);
+    Promise.all([loadProviders(), loadTraces(), loadHealth()]);
+  }
+
+  if (phase === "ERROR") {
+    const response = event.details && event.details.response;
+    renderPipeline("failed", index);
+    renderError(event.message || "Council request failed.", response || {});
+    setRunning(false);
+    Promise.all([loadProviders(), loadTraces(), loadHealth()]);
+  }
+}
+
+function renderPipelineFromEvents(activeIndex) {
+  els.steps.innerHTML = pipelineSteps.map(([id, title, description], index) => {
+    const rawStatus = state.pipelineStatuses.get(index);
+    let className = "pipeline-step";
+    if (index < activeIndex || rawStatus === "done" || rawStatus === "queued") className += " done";
+    if (index === activeIndex && rawStatus !== "done" && rawStatus !== "queued") className += " running";
+    if (rawStatus === "failed") className += " failed";
+    if (rawStatus === "degraded") className += " running";
+
+    return `
+      <li class="${className}" data-step="${id}">
+        <span class="step-index">${index + 1}</span>
+        <div>
+          <strong>${title}</strong>
+          <p>${description}</p>
+        </div>
+      </li>
+    `;
+  }).join("");
+}
+
+function updateLoadingMessage(message) {
+  const heading = els.answer.querySelector("[data-loading-title]");
+  if (heading) {
+    heading.textContent = message;
+  }
+}
+
+function closeEventStream() {
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
   }
 }
 
@@ -153,7 +300,7 @@ function renderLoadingAnswer(query) {
     <div class="answer-header">
       <div>
         <p class="section-kicker">Council response</p>
-        <h2>Reasoning in progress</h2>
+        <h2 data-loading-title>Reasoning in progress</h2>
         <div class="answer-meta">
           <span class="meta-pill">Mode: ${escapeHtml(state.selectedMode)}</span>
           <span class="meta-pill">Prompt: ${query.length} chars</span>
