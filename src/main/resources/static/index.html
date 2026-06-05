@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Council Reasoning Console</title>
+    <meta name="description" content="Operational console for Council multi-model reasoning orchestration.">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Council navigation">
+        <a class="brand" href="/" aria-label="Council home">
+          <span class="brand-mark">C</span>
+          <span>
+            <strong>Council</strong>
+            <small>Reasoning Console</small>
+          </span>
+        </a>
+
+        <nav class="nav-list" aria-label="Primary">
+          <a class="nav-item active" href="#reasoning">Reasoning</a>
+          <a class="nav-item" href="#providers">Providers</a>
+          <a class="nav-item" href="#traces">Traces</a>
+          <a class="nav-item" href="#architecture">Architecture</a>
+        </nav>
+
+        <section class="system-card" aria-labelledby="system-status-title">
+          <div class="section-kicker" id="system-status-title">System</div>
+          <div class="system-status" id="system-status">
+            <span class="status-dot pending"></span>
+            <span>Checking health</span>
+          </div>
+          <dl class="mini-stats">
+            <div>
+              <dt>Routing</dt>
+              <dd id="routing-mode">--</dd>
+            </div>
+            <div>
+              <dt>Available</dt>
+              <dd id="available-count">--</dd>
+            </div>
+          </dl>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Multi-model verification workspace</p>
+            <h1>Council operator console</h1>
+          </div>
+          <div class="topbar-actions">
+            <button class="ghost-button" type="button" id="refresh-button">Refresh</button>
+            <a class="primary-link" href="/swagger-ui/index.html">API docs</a>
+          </div>
+        </header>
+
+        <section class="hero-grid" id="reasoning">
+          <div class="reasoning-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">Ask the council</p>
+                <h2>Run a verified reasoning pass</h2>
+              </div>
+              <div class="mode-control" aria-label="Reasoning mode">
+                <button class="mode-pill active" type="button" data-mode="balanced">Balanced</button>
+                <button class="mode-pill" type="button" data-mode="accuracy">Accuracy</button>
+                <button class="mode-pill" type="button" data-mode="incident">Incident</button>
+              </div>
+            </div>
+
+            <form class="composer" id="reason-form">
+              <label for="query-input">Prompt</label>
+              <textarea id="query-input" name="query" rows="7" required placeholder="Ask a complex debugging, design, or decision question..."></textarea>
+              <div class="composer-footer">
+                <div class="prompt-chips" aria-label="Example prompts">
+                  <button type="button" data-prompt="A payment pipeline has intermittent duplicate captures after retry storms. Diagnose likely failure points and propose the safest remediation plan.">Debug payment pipeline</button>
+                  <button type="button" data-prompt="Design a low-latency multi-provider reasoning system for high-stakes decisions with verifier fallbacks and trace persistence.">Design verifier architecture</button>
+                  <button type="button" data-prompt="Compare two deployment strategies for a model council under strict cost, latency, and reliability constraints.">Compare strategies</button>
+                </div>
+                <button class="submit-button" type="submit" id="submit-button">
+                  <span class="button-label">Run council</span>
+                  <span class="button-spinner" aria-hidden="true"></span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <aside class="pipeline-panel" aria-labelledby="pipeline-title">
+            <div class="panel-heading compact">
+              <div>
+                <p class="section-kicker">Live path</p>
+                <h2 id="pipeline-title">Reasoning pipeline</h2>
+              </div>
+              <span class="latency-badge" id="latency-badge">Idle</span>
+            </div>
+            <ol class="pipeline-steps" id="pipeline-steps"></ol>
+          </aside>
+        </section>
+
+        <section class="result-section" aria-live="polite">
+          <div class="answer-panel" id="answer-panel">
+            <div class="empty-state">
+              <span class="empty-icon">?</span>
+              <h2>Ready for a high-signal pass</h2>
+              <p>Submit a prompt and Council will coordinate draft providers, critique, verification, synthesis, and trace persistence.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="dashboard-grid">
+          <div class="providers-panel" id="providers">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">Provider fabric</p>
+                <h2>Routing readiness</h2>
+              </div>
+              <span class="soft-tag" id="provider-count">Loading</span>
+            </div>
+            <div class="provider-table" id="provider-table" aria-live="polite"></div>
+          </div>
+
+          <div class="traces-panel" id="traces">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">Audit trail</p>
+                <h2>Recent traces</h2>
+              </div>
+              <button class="ghost-button small" type="button" id="reload-traces">Reload</button>
+            </div>
+            <div class="trace-list" id="trace-list" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section class="architecture-panel" id="architecture">
+          <div>
+            <p class="section-kicker">Elite-tier operating model</p>
+            <h2>What Council should optimize for next</h2>
+          </div>
+          <div class="principle-grid">
+            <article>
+              <span>01</span>
+              <h3>Route before you fan out</h3>
+              <p>Use task-aware routing and latency budgets so easy prompts do not pay for the full council.</p>
+            </article>
+            <article>
+              <span>02</span>
+              <h3>Verify with scope</h3>
+              <p>Keep hard enforcement for design and capacity prompts; use advisory verifier signals for debugging and exploratory work.</p>
+            </article>
+            <article>
+              <span>03</span>
+              <h3>Trace every decision</h3>
+              <p>Persist drafts, critic notes, verifier verdicts, model health, latency, and final confidence as one inspectable run.</p>
+            </article>
+            <article>
+              <span>04</span>
+              <h3>Degrade gracefully</h3>
+              <p>Prefer provider health, circuit breakers, and fallback slots over heroic retries when external accounts fail.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-label="Notifications"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
