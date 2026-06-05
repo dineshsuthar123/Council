@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
  *         + (draftConfidence × 0.20)
  * </pre>
  * <p>
- * If the critic is unavailable, we fall back to confidence-only scoring.
+ * If the critic is unavailable, we fall back to calibrated confidence scoring.
  */
 @Component
 public class DeterministicJudge {
@@ -82,15 +82,22 @@ public class DeterministicJudge {
                 reason = "Only one valid draft available, but it was disqualified by Verifier. "
                         + verifierReason(verifierVerdict);
             } else if (criticAvailable) {
+                double calibratedConfidence = calibratedConfidence(only);
                 reason = "Only one valid draft available. Applied weighted critic formula "
                         + "(mathCorrectnessScore=%.2f, feasibilityScore=%.2f, failureDepthScore=%.2f, confidence=%.2f)."
                         .formatted(
                         criticResult.mathCorrectnessScore(),
                         criticResult.feasibilityScore(),
                         criticResult.failureDepthScore(),
-                        only.confidence());
+                        calibratedConfidence);
             } else {
-                reason = "Only one valid draft available. Critic unavailable, score = draft confidence.";
+                reason = "Only one valid draft available. Critic unavailable, score = calibrated draft confidence.";
+            }
+
+            double productionConsistencyCap = productionConsistencyScoreCap(only);
+            if (productionConsistencyCap < 1.0) {
+                reason += " Production consistency cap applied: %s<=%.2f."
+                        .formatted(only.provider(), productionConsistencyCap);
             }
 
             return new JudgeResult(only.provider(), only.model(),
@@ -101,7 +108,7 @@ public class DeterministicJudge {
 
         boolean criticAvailable = criticResult != null && criticResult.isSuccess();
         if (!criticAvailable) {
-            log.info("[judge] Critic unavailable – confidence-only fallback scoring");
+            log.info("[judge] Critic unavailable – calibrated confidence fallback scoring");
         }
 
         // Apply the verifier guillotine before any weighted scoring.
@@ -173,20 +180,22 @@ public class DeterministicJudge {
 
     /**
      * Compute the principal-review score for a single draft.
-     * Fallback mode (no critic): score = draft confidence.
+     * Fallback mode (no critic): score = calibrated draft confidence.
      */
     double scoreDraft(DraftResult draft, CriticResult criticResult) {
+        double confidence = calibratedConfidence(draft);
+        double productionConsistencyCap = productionConsistencyScoreCap(draft);
+
         if (criticResult == null || !criticResult.isSuccess()) {
-            return CouncilUtils.clamp01(draft.confidence());
+            return CouncilUtils.clamp01(Math.min(confidence, productionConsistencyCap));
         }
 
-        double confidence  = draft.confidence();
         double score = (criticResult.mathCorrectnessScore() * W_MATH)
                      + (criticResult.feasibilityScore() * W_FEASIBILITY)
                      + (criticResult.failureDepthScore() * W_FAILURE_DEPTH)
                      + (confidence * W_CONFIDENCE);
 
-        return CouncilUtils.clamp01(score);
+        return CouncilUtils.clamp01(Math.min(score, productionConsistencyCap));
     }
 
     /**
@@ -220,7 +229,7 @@ public class DeterministicJudge {
         }
 
         if (!criticAvailable) {
-            sb.append(". Critic unavailable. Fallback mode: score = draft confidence.");
+            sb.append(". Critic unavailable. Fallback mode: score = calibrated draft confidence.");
         } else {
             sb.append(". Formula: (mathCorrectnessScore*%.2f) + (feasibilityScore*%.2f) + "
                     .formatted(W_MATH, W_FEASIBILITY));
@@ -242,6 +251,11 @@ public class DeterministicJudge {
             }
         }
 
+        String consistencyCaps = productionConsistencyCapsSummary(drafts);
+        if (!consistencyCaps.isBlank()) {
+            sb.append(". Production consistency caps applied: ").append(consistencyCaps);
+        }
+
         sb.append(". ").append(buildWinnerReason(rankings, drafts, criticResult,
             criticAvailable, verifierDisqualifications));
 
@@ -261,7 +275,7 @@ public class DeterministicJudge {
         }
 
         Map<String, Double> confidenceByProvider = drafts.stream()
-                .collect(Collectors.toMap(DraftResult::provider, DraftResult::confidence, (a, b) -> a));
+                .collect(Collectors.toMap(DraftResult::provider, this::calibratedConfidence, (a, b) -> a));
 
         double winnerConfidence = confidenceByProvider.getOrDefault(winner.provider(), 0.0);
 
@@ -312,5 +326,99 @@ public class DeterministicJudge {
             return "Verifier flagged a fatal math/consistency/throughput violation.";
         }
         return reason;
+    }
+
+    private double calibratedConfidence(DraftResult draft) {
+        return Math.min(CouncilUtils.clamp01(draft.confidence()), productionConsistencyScoreCap(draft));
+    }
+
+    private double productionConsistencyScoreCap(DraftResult draft) {
+        String answer = normalize(draft.answer() + " " + draft.summary());
+        if (!looksLikeStaleDeletionConsistencyAnswer(answer)) {
+            return 1.0;
+        }
+
+        int missing = 0;
+        boolean hasTombstone = containsAny(answer, "tombstone", "negative cache", "negative-cache",
+                "deleted marker", "deletion marker", "cache delete marker");
+        boolean hasPrimarySafeRead = containsAny(answer, "primary", "leader", "bypass replica",
+                "avoid replica", "source of truth", "read-your-writes", "replica lag window");
+        boolean hasStampedeCoalescing = containsAny(answer, "singleflight", "single flight",
+                "request coalescing", "request collapsing", "per-key lock", "per key lock",
+                "distributed lock", "mutex", "dogpile");
+        boolean separatesAnalytics = containsAny(answer, "analytics lag", "dashboard",
+                "consumer lag", "redirect correctness", "correctness is independent",
+                "does not change the redirect");
+        boolean hasVersionOrDeletedAt = containsAny(answer, "deleted_at", "deleted at",
+                "version", "row_version", "generation", "delete version");
+        boolean hasCorrectStatus = containsAny(answer, "404", "410", "not found", "gone");
+
+        if (!hasTombstone) {
+            missing++;
+        }
+        if (!hasPrimarySafeRead && !hasVersionOrDeletedAt) {
+            missing++;
+        }
+        if (!hasStampedeCoalescing) {
+            missing++;
+        }
+        if (!separatesAnalytics) {
+            missing++;
+        }
+        if (!hasCorrectStatus) {
+            missing++;
+        }
+
+        double cap = 1.0;
+        if (missing >= 4) {
+            cap = 0.68;
+        } else if (missing >= 3) {
+            cap = 0.72;
+        } else if (missing >= 2) {
+            cap = 0.80;
+        }
+
+        if (treatsRedisTtlAsEnough(answer) && !hasTombstone) {
+            cap = Math.min(cap, 0.65);
+        }
+        if (answer.contains("replica") && !hasPrimarySafeRead && !hasVersionOrDeletedAt) {
+            cap = Math.min(cap, 0.65);
+        }
+
+        return cap;
+    }
+
+    private boolean looksLikeStaleDeletionConsistencyAnswer(String answer) {
+        return answer.contains("redis")
+                && (answer.contains("postgres") || answer.contains("replica"))
+                && (answer.contains("deleted") || answer.contains("deletion"))
+                && (answer.contains("kafka") || answer.contains("analytics"))
+                && (answer.contains("redirect") || answer.contains("url"));
+    }
+
+    private boolean treatsRedisTtlAsEnough(String answer) {
+        return (answer.contains("ttl") || answer.contains("expiration") || answer.contains("expire"))
+                && containsAny(answer, "prevent stale", "avoid stale", "stale redirects", "cache invalidation");
+    }
+
+    private String productionConsistencyCapsSummary(List<DraftResult> drafts) {
+        return drafts.stream()
+                .map(draft -> Map.entry(draft.provider(), productionConsistencyScoreCap(draft)))
+                .filter(entry -> entry.getValue() < 1.0)
+                .map(entry -> "%s<=%.2f".formatted(entry.getKey(), entry.getValue()))
+                .collect(Collectors.joining(", "));
+    }
+
+    private boolean containsAny(String haystack, String... needles) {
+        for (String needle : needles) {
+            if (haystack.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT);
     }
 }

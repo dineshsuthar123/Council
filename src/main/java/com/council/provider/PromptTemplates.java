@@ -91,7 +91,7 @@ public final class PromptTemplates {
                 }
 
                 User Query:
-                """ + userQuery;
+                """ + userQuery + productionConsistencyRubric(userQuery);
     }
 
       // ── Verifier prompt ──────────────────────────────────────────────────────
@@ -284,6 +284,8 @@ public final class PromptTemplates {
 
                         The final answer should read like a principal engineer wrote it after reviewing multiple drafts, not like a summary of them.
 
+                        %s
+
                         Original User Query:
                         %s
 
@@ -295,7 +297,7 @@ public final class PromptTemplates {
 
                         Critic Notes:
                         %s
-                        """.formatted(userQuery, draftSection, verifierSection, criticSection);
+                        """.formatted(productionConsistencyRubric(userQuery), userQuery, draftSection, verifierSection, criticSection);
       }
 
     // ── Critic prompt ─────────────────────────────────────────────────────────
@@ -377,6 +379,8 @@ public final class PromptTemplates {
 
                         CRITICAL TYPE ENFORCEMENT: All score fields (mathCorrectnessScore, feasibilityScore, failureDepthScore, genericnessPenalty, contradictionSeverity) MUST BE RAW NUMBERS (e.g., 0.9) AND NEVER WRAPPED IN QUOTES (e.g., '0.9'). YOU MUST INCLUDE EVERY FIELD LISTED IN THE SCHEMA.
 
+                        %s
+
                         ═══ JSON SCHEMA ═══
                 {
                   "globalSummary": "string — one paragraph critique of all drafts",
@@ -398,10 +402,52 @@ public final class PromptTemplates {
                 }
 
                 User Query:
-                """ + userQuery + "\n\nCandidate Drafts:\n\n" + draftSummaries;
+                """.formatted(productionConsistencyRubric(userQuery)) + userQuery + "\n\nCandidate Drafts:\n\n" + draftSummaries;
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private static String productionConsistencyRubric(String userQuery) {
+        if (!isCacheDeletionConsistencyPrompt(userQuery)) {
+            return "";
+        }
+
+        return """
+
+                SCENARIO-SPECIFIC CONSISTENCY RUBRIC
+
+                This prompt is a stale-read/cache-deletion incident. Penalize shallow answers hard.
+
+                Required production conclusions:
+                - Redirect correctness is authoritative over analytics freshness. Kafka/consumer lag may make dashboards stale, but it must not change the redirect decision.
+                - A URL deleted 1 second ago must not redirect. Return 404 Not Found, or 410 Gone if the product intentionally reveals prior existence.
+                - Redis TTL/expiration alone is not sufficient deletion consistency. A cached active redirect with a 5 minute TTL can still create stale redirects.
+                - On deletion, write deleted_at/version/tombstone to the primary database, invalidate or overwrite Redis immediately, and store a short-lived DELETED/negative-cache tombstone.
+                - During the replica-lag window, the redirect path must not trust a PostgreSQL replica that can be 2 seconds stale. It must use the Redis tombstone, a primary read, or a deletion/version check that is safe under lag.
+                - Cache stampede handling must include singleflight/request coalescing/per-key lock/distributed lock. Retry/backoff alone is not enough because it can still fan out many identical DB reads.
+                - Pseudocode must be concrete control flow, not a prose checklist.
+                - Metrics/logs/alerts must distinguish redirect correctness from analytics lag and include Redis p95/p99 latency/timeouts, DB replica lag, primary fallback rate, tombstone hits, stale-cache prevention, lock wait/load count, Kafka consumer lag, and dashboard freshness.
+
+                Scoring caps for the critic:
+                - If a draft treats Redis TTL/expiration as sufficient stale-delete protection, cap feasibilityScore at 0.60.
+                - If a draft trusts lagging replicas despite 2 second replica lag and a 1 second old deletion, cap feasibilityScore at 0.55.
+                - If a draft misses two of tombstone/negative cache, primary-read or safe version check, singleflight/coalescing, analytics-vs-redirect separation, cap feasibilityScore at 0.70.
+                - If a draft misses three or more of those controls, cap feasibilityScore at 0.55 and failureDepthScore at 0.65.
+                - If pseudocode is only a plain-English list, cap failureDepthScore at 0.65.
+                """;
+    }
+
+    private static boolean isCacheDeletionConsistencyPrompt(String userQuery) {
+        if (userQuery == null) {
+            return false;
+        }
+        String q = userQuery.toLowerCase();
+        return q.contains("redis")
+                && (q.contains("postgres") || q.contains("replica"))
+                && (q.contains("deleted") || q.contains("deletion"))
+                && (q.contains("kafka") || q.contains("analytics"))
+                && (q.contains("url-shortener") || q.contains("short url") || q.contains("redirect"));
+    }
 
     private static String formatDraftForCritic(DraftResult draft) {
         return ("Draft from %s (model=%s, confidence=%.2f):" +

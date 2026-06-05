@@ -151,6 +151,85 @@ class DeterministicJudgeTest {
         assertTrue(result.reason().contains("Verifier disqualifications"));
         assertTrue(result.reason().contains("processing capacity"));
     }
+
+    @Test
+    @DisplayName("Weak stale deletion answer is capped even when provider confidence is high")
+    void weakStaleDeletionAnswerIsCappedWithoutCritic() {
+        DraftResult weak = DraftResult.success("gemini", "gemini-2.5-pro",
+                weakUrlShortenerAnswer(),
+                "Return 404, use Redis expiration, fallback to PostgreSQL replicas, and monitor Kafka.",
+                List.of(), List.of(), 0.95, 1000, "raw");
+
+        JudgeResult result = judge.evaluate(List.of(weak), null);
+
+        assertEquals("gemini", result.winnerProvider());
+        assertTrue(result.winnerScore() <= 0.72,
+                "A high-confidence answer missing tombstones, primary reads, and singleflight must not score elite");
+    }
+
+    @Test
+    @DisplayName("Weak stale deletion answer cannot score elite even with lenient critic scores")
+    void weakStaleDeletionAnswerIsCappedWithLenientCritic() {
+        DraftResult weak = DraftResult.success("gemini", "gemini-2.5-pro",
+                weakUrlShortenerAnswer(),
+                "Return 404, use Redis expiration, fallback to PostgreSQL replicas, and monitor Kafka.",
+                List.of(), List.of(), 0.95, 1000, "raw");
+
+        CriticResult overlyLenient = CriticResult.successFull("critic", "critic-model",
+                "Too generous critic", 0.0,
+                Map.of("gemini", 0),
+                List.of(), List.of(), List.of(),
+                0.95, 0.95, 0.95,
+                0.0, List.of(), false, false,
+                "gemini sounds complete",
+                100, "raw");
+
+        JudgeResult result = judge.evaluate(List.of(weak), overlyLenient);
+
+        assertEquals("gemini", result.winnerProvider());
+        assertTrue(result.winnerScore() <= 0.72,
+                "Deterministic calibration should cap stale-delete answers that only sound production-grade");
+    }
+
+    @Test
+    @DisplayName("Strong stale deletion answer keeps elite confidence")
+    void strongStaleDeletionAnswerKeepsHighConfidence() {
+        DraftResult strong = DraftResult.success("claude", "claude-test",
+                """
+                Return 404 Not Found, or 410 Gone if the product intentionally reveals deletion history.
+                Do not trust a lagging PostgreSQL replica during the 2 second replica lag window after a
+                deletion 1 second ago. On delete, write deleted_at and a monotonic version to the primary,
+                overwrite Redis alias:abc123 with a short-lived DELETED tombstone/negative-cache value,
+                and invalidate the active redirect key. Redirect reads treat the tombstone as authoritative;
+                if Redis times out, they read the primary or verify the deletion version before redirecting.
+                Cache stampede is handled with singleflight/request coalescing or a per-key distributed lock
+                so only one request loads the alias while others wait briefly. Kafka analytics consumer lag
+                and stale dashboards do not affect redirect correctness. Metrics include Redis p99,
+                replica lag, primary fallback rate, tombstone hits, lock wait time, and Kafka consumer lag.
+                Pseudocode: if tombstone return 404; if cache hit redirect; acquire per-key lock;
+                read primary when recent delete is possible; cache DELETED or active version; emit analytics async.
+                """,
+                "Uses tombstone, primary read, version check, singleflight, and analytics separation.",
+                List.of(), List.of(), 0.95, 1000, "raw");
+
+        JudgeResult result = judge.evaluate(List.of(strong), null);
+
+        assertEquals("claude", result.winnerProvider());
+        assertEquals(0.95, result.winnerScore(), 0.001);
+    }
+
+    private String weakUrlShortenerAnswer() {
+        return """
+                The redirect endpoint should return 404 because the short URL was deleted.
+                Redis degradation means the app should use Redis built-in expiration or a cache
+                invalidation queue to prevent stale redirects. If Redis misses or times out,
+                fallback to PostgreSQL read replicas with exponential backoff. Kafka analytics
+                consumers are lagging, so monitoring dashboards may still show successful redirects.
+                For a cache stampede, retry Redis and PostgreSQL with exponential backoff.
+                Pseudocode: check Redis, fallback to PostgreSQL, if found check deletion timestamp,
+                redirect if active, otherwise return 404, then write analytics to Kafka.
+                """;
+    }
 }
 
 
