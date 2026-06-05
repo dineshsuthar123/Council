@@ -374,9 +374,15 @@ async function loadHealth() {
 async function loadProviders() {
   renderProviderSkeleton();
   try {
-    const providers = await fetchJson(`${API_BASE}/providers/status`);
-    els.providerCount.textContent = `${providers.length} providers`;
-    els.providerTable.innerHTML = providers.map(renderProviderRow).join("") || emptyInline("No providers configured.");
+    const [providers, scorecards] = await Promise.all([
+      fetchJson(`${API_BASE}/providers/status`),
+      fetchJson(`${API_BASE}/providers/scorecards?limit=300`)
+    ]);
+    const scorecardByProvider = new Map((scorecards || []).map((scorecard) => [scorecard.provider, scorecard]));
+    els.providerCount.textContent = `${providers.length} providers · ${scorecards.length} scored`;
+    els.providerTable.innerHTML = providers
+      .map((provider) => renderProviderRow(provider, scorecardByProvider.get(provider.provider)))
+      .join("") || emptyInline("No providers configured.");
     bindProviderActions();
   } catch (error) {
     els.providerCount.textContent = "Unavailable";
@@ -395,13 +401,19 @@ function renderProviderSkeleton() {
   `).join("");
 }
 
-function renderProviderRow(provider) {
+function renderProviderRow(provider, scorecard) {
   const statusClass = provider.enabled && provider.availableForRouting !== false && !provider.coolingDown ? "up" : provider.coolingDown ? "degraded" : "down";
   const roles = Array.isArray(provider.roles) && provider.roles.length
     ? provider.roles.map((role) => `<span class="role-tag">${escapeHtml(role)}</span>`).join("")
     : `<span class="role-tag">GENERAL</span>`;
   const permits = provider.availableConcurrencyPermits ?? "--";
   const total = (provider.totalSuccesses || 0) + (provider.totalFailures || 0);
+  const quality = scorecard
+    ? `${Math.round(scorecard.successRate * 100)}% success | p95 ${scorecard.p95LatencyMs} ms`
+    : "No trace score yet";
+  const confidence = scorecard
+    ? `avg ${scorecard.avgLatencyMs} ms | conf ${Math.round(scorecard.avgConfidence * 100)}%`
+    : `${Math.round((provider.recentFailureRate || 0) * 100)}% recent failure | ${total} calls`;
 
   return `
     <div class="provider-row">
@@ -412,7 +424,8 @@ function renderProviderRow(provider) {
       <div class="provider-roles">${roles}</div>
       <div class="provider-metric">
         <strong>${permits}</strong> permits<br>
-        ${Math.round((provider.recentFailureRate || 0) * 100)}% recent failure | ${total} calls
+        ${escapeHtml(quality)}<br>
+        ${escapeHtml(confidence)}
       </div>
       <button class="reset-button" type="button" data-reset="${escapeHtml(provider.provider)}" ${provider.coolingDown ? "" : "disabled"}>Reset</button>
     </div>

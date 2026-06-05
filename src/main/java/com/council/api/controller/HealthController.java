@@ -2,6 +2,8 @@ package com.council.api.controller;
 
 import com.council.api.dto.ErrorResponse;
 import com.council.api.dto.ProviderStatusResponse;
+import com.council.api.dto.ProviderScorecardResponse;
+import com.council.metrics.ProviderScorecardService;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
 import com.council.provider.routing.ProviderConcurrencyLimiter;
@@ -34,13 +36,16 @@ public class HealthController {
     private final ProviderRegistry registry;
     private final ProviderCircuitBreaker circuitBreaker;
     private final ProviderConcurrencyLimiter concurrencyLimiter;
+    private final ProviderScorecardService scorecardService;
 
     public HealthController(ProviderRegistry registry,
                             ProviderCircuitBreaker circuitBreaker,
-                            ProviderConcurrencyLimiter concurrencyLimiter) {
+                            ProviderConcurrencyLimiter concurrencyLimiter,
+                            ProviderScorecardService scorecardService) {
         this.registry = registry;
         this.circuitBreaker = circuitBreaker;
         this.concurrencyLimiter = concurrencyLimiter;
+        this.scorecardService = scorecardService;
     }
 
     /* ── GET /providers/status ─────────────────────────────────────── */
@@ -98,6 +103,12 @@ public class HealthController {
                 })
                 .toList();
         return ResponseEntity.ok(statuses);
+    }
+
+    @GetMapping("/providers/scorecards")
+    public ResponseEntity<List<ProviderScorecardResponse>> providerScorecards(
+            @RequestParam(defaultValue = "200") int limit) {
+        return ResponseEntity.ok(scorecardService.scorecards(limit));
     }
 
     /* ── GET /health ───────────────────────────────────────────────── */

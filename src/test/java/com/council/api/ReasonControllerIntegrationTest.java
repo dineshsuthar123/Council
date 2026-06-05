@@ -175,6 +175,15 @@ class ReasonControllerIntegrationTest {
     }
 
     @Test
+    @DisplayName("GET /api/v1/providers/scorecards returns list")
+    void providerScorecardsReturnsList() throws Exception {
+        mockMvc.perform(get("/api/v1/providers/scorecards")
+                        .param("limit", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
+    }
+
+    @Test
     @DisplayName("GET /api/v1/traces returns paginated list")
     void traceListReturnsPaginatedResult() throws Exception {
         mockMvc.perform(get("/api/v1/traces")
