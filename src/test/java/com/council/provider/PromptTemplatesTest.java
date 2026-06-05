@@ -75,6 +75,30 @@ class PromptTemplatesTest {
     }
 
     @Test
+    @DisplayName("URL shortener critic prompt includes stale deletion consistency rubric")
+    void buildCriticPrompt_includesStaleDeletionConsistencyRubric() {
+        String query = """
+                A URL-shortener uses Redis, PostgreSQL read replicas, Kafka analytics, and redirects.
+                Redis is degraded, replicas are 2 seconds behind, Kafka consumers lag, and the short URL was deleted 1 second ago.
+                Explain redirect correctness and cache stampede handling.
+                """;
+        List<DraftResult> drafts = List.of(
+                DraftResult.success("a", "m", "Return 404 and expire Redis keys.", "summary",
+                        List.of(), List.of(), 0.95, 100, "raw")
+        );
+
+        String prompt = PromptTemplates.buildCriticPrompt(query, drafts);
+
+        assertTrue(prompt.contains("SCENARIO-SPECIFIC CONSISTENCY RUBRIC"));
+        assertTrue(prompt.contains("Redis TTL/expiration alone is not sufficient"));
+        assertTrue(prompt.contains("DELETED/negative-cache tombstone"));
+        assertTrue(prompt.contains("must not trust a PostgreSQL replica"));
+        assertTrue(prompt.contains("singleflight/request coalescing"));
+        assertTrue(prompt.contains("Redirect correctness is authoritative over analytics freshness"));
+        assertTrue(prompt.contains("cap feasibilityScore at 0.55"));
+    }
+
+    @Test
     @DisplayName("Draft prompt includes confidence range instruction")
     void buildDraftPrompt_includesConfidenceRange() {
         String prompt = PromptTemplates.buildDraftPrompt("test");
