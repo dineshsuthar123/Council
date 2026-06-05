@@ -3,6 +3,7 @@ package com.council.orchestrator;
 import com.council.api.dto.FinalResponse;
 import com.council.config.CouncilProperties;
 import com.council.critic.CriticEngine;
+import com.council.events.PipelineEventBroadcaster;
 import com.council.judge.DeterministicJudge;
 import com.council.judge.PromptClassifier;
 import com.council.judge.SpecificityScorer;
@@ -41,6 +42,7 @@ class ReasoningOrchestratorRoutingTest {
     private OrchestrationMetrics metrics;
     private ProviderSelectionStrategy selectionStrategy;
     private ProviderConcurrencyLimiter concurrencyLimiter;
+    private PipelineEventBroadcaster eventBroadcaster;
     private ReasoningOrchestrator orchestrator;
 
     @BeforeEach
@@ -51,6 +53,7 @@ class ReasoningOrchestratorRoutingTest {
         synthesizerEngine = mock(SynthesizerEngine.class);
         traceService = mock(TraceService.class);
         selectionStrategy = mock(ProviderSelectionStrategy.class);
+        eventBroadcaster = mock(PipelineEventBroadcaster.class);
         concurrencyLimiter = new ProviderConcurrencyLimiter();
         metrics = new OrchestrationMetrics(new SimpleMeterRegistry());
 
@@ -80,7 +83,8 @@ class ReasoningOrchestratorRoutingTest {
 
         DeterministicJudge judge = new DeterministicJudge(props, new SpecificityScorer());
         orchestrator = new ReasoningOrchestrator(registry, criticEngine, verifierEngine, synthesizerEngine, judge,
-                new PromptClassifier(), traceService, metrics, props, selectionStrategy, concurrencyLimiter);
+                new PromptClassifier(), traceService, metrics, props, selectionStrategy, concurrencyLimiter,
+                eventBroadcaster);
     }
 
     private LlmAdapter mockAdapter(String name, String model, DraftResult result) {

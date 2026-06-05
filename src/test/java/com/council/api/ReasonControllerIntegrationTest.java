@@ -1,6 +1,7 @@
 package com.council.api;
 
 import com.council.api.dto.FinalResponse;
+import com.council.events.PipelineEventBroadcaster;
 import com.council.orchestrator.ReasoningOrchestrator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -14,8 +15,13 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Executor;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -31,6 +37,12 @@ class ReasonControllerIntegrationTest {
 
     @MockBean
     private ReasoningOrchestrator orchestrator;
+
+    @MockBean
+    private PipelineEventBroadcaster eventBroadcaster;
+
+    @MockBean(name = "reasoningRunExecutor")
+    private Executor reasoningRunExecutor;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -51,6 +63,26 @@ class ReasonControllerIntegrationTest {
                 .andExpect(jsonPath("$.traceId").value("trace-id-123"))
                 .andExpect(jsonPath("$.finalAnswer").value("The answer is 42"))
                 .andExpect(jsonPath("$.confidence").value(0.85));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/reason/runs accepts async run and exposes event URL")
+    void asyncReasonRunReturns202() throws Exception {
+        when(orchestrator.reason(anyString(), anyString())).thenReturn(new FinalResponse(
+                UUID.randomUUID().toString(), "The answer is 42",
+                "Winner by confidence", List.of("gemini"), List.of(), 0.85));
+
+        mockMvc.perform(post("/api/v1/reason/runs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"query\": \"What is the meaning of life?\"}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.traceId").exists())
+                .andExpect(jsonPath("$.status").value("RUNNING"))
+                .andExpect(jsonPath("$.eventsUrl").exists());
+
+        verify(eventBroadcaster).publish(anyString(), eq("ACCEPTED"), eq("done"),
+                anyString(), eq(0L), any());
+        verify(reasoningRunExecutor).execute(any(Runnable.class));
     }
 
     @Test

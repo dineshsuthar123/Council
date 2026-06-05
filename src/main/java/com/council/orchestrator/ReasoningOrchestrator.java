@@ -4,6 +4,7 @@ import com.council.api.dto.FinalResponse;
 import com.council.common.CouncilConstants;
 import com.council.config.CouncilProperties;
 import com.council.critic.CriticEngine;
+import com.council.events.PipelineEventBroadcaster;
 import com.council.judge.DeterministicJudge;
 import com.council.judge.PromptClassifier;
 import com.council.judge.TaskType;
@@ -55,6 +56,7 @@ public class ReasoningOrchestrator {
     private final OrchestrationMetrics metrics;
     private final ProviderSelectionStrategy selectionStrategy;
     private final ProviderConcurrencyLimiter concurrencyLimiter;
+    private final PipelineEventBroadcaster eventBroadcaster;
     private final long draftTimeoutSeconds;
     private final long criticTimeoutSeconds;
     private final long verifierTimeoutSeconds;
@@ -70,7 +72,8 @@ public class ReasoningOrchestrator {
                                   OrchestrationMetrics metrics,
                                   CouncilProperties properties,
                                   ProviderSelectionStrategy selectionStrategy,
-                                  ProviderConcurrencyLimiter concurrencyLimiter) {
+                                  ProviderConcurrencyLimiter concurrencyLimiter,
+                                  PipelineEventBroadcaster eventBroadcaster) {
         this.registry = registry;
         this.criticEngine = criticEngine;
         this.verifierEngine = verifierEngine;
@@ -81,6 +84,7 @@ public class ReasoningOrchestrator {
         this.metrics = metrics;
         this.selectionStrategy = selectionStrategy;
         this.concurrencyLimiter = concurrencyLimiter;
+        this.eventBroadcaster = eventBroadcaster;
         CouncilProperties.OrchestratorConfig orchestratorConfig = properties.getOrchestrator();
         this.draftTimeoutSeconds = positiveOrDefault(
                 orchestratorConfig.getDraftTimeoutSeconds(), DEFAULT_DRAFT_TIMEOUT_SECONDS);
@@ -99,27 +103,47 @@ public class ReasoningOrchestrator {
      */
     public FinalResponse reason(String userQuery) {
         String traceId = UUID.randomUUID().toString();
+        return reason(userQuery, traceId);
+    }
+
+    /**
+     * Execute the full reasoning pipeline using a caller-provided trace ID.
+     * This is used by the async run API so clients can subscribe to events
+     * before the final response exists.
+     */
+    public FinalResponse reason(String userQuery, String traceId) {
         long startTime = System.currentTimeMillis();
         MDC.put(CouncilConstants.MDC_TRACE_ID, traceId);
         metrics.recordRequest();
 
         log.info("[orchestrator] Starting reasoning pipeline, traceId={}", traceId);
+        emit(traceId, "START", "running", "Reasoning pipeline started", startTime,
+                Map.of("queryLength", userQuery == null ? 0 : userQuery.length()));
 
         try {
             // 0. Classify the prompt
             TaskType taskType = promptClassifier.classify(userQuery);
             log.info("[orchestrator] Prompt classified as: {}", taskType);
+            emit(traceId, "CLASSIFY", "done", "Prompt classified as " + taskType, startTime,
+                    Map.of("taskType", taskType.name()));
 
             // 1. Select providers (routing-aware or legacy), with task type
             List<LlmAdapter> providers = selectDraftProviders(traceId, taskType);
             if (providers.isEmpty()) {
                 log.warn("[orchestrator] No providers available");
-                return errorResponse(traceId, "No LLM providers are currently available");
+                FinalResponse response = errorResponse(traceId, "No LLM providers are currently available");
+                emitFailure(traceId, "ERROR", response.judgeReason(), startTime, response);
+                return response;
             }
             log.info("[orchestrator] {} providers selected: {}", providers.size(),
                     providers.stream().map(LlmAdapter::providerName).toList());
+            emit(traceId, "ROUTE", "done", providers.size() + " draft providers selected", startTime,
+                    Map.of("providers", providers.stream().map(LlmAdapter::providerName).toList(),
+                            "routingEnabled", registry.isRoutingEnabled()));
 
             // 2. Draft phase
+            emit(traceId, "DRAFT", "running", "Draft phase started", startTime,
+                    Map.of("providerCount", providers.size()));
             DraftRequest draftRequest = DraftRequest.of(traceId, userQuery);
             List<DraftResult> allDrafts = runDraftPhase(providers, draftRequest);
             List<DraftResult> traceDrafts = new ArrayList<>(allDrafts);
@@ -132,15 +156,23 @@ public class ReasoningOrchestrator {
 
             log.info("[orchestrator] Drafts: {} successful, {} failed",
                     successfulDrafts.size(), failedProviders.size());
+            emit(traceId, "DRAFT", "done", "Draft phase completed", startTime,
+                    Map.of("successfulDrafts", successfulDrafts.size(),
+                            "failedDrafts", failedProviders.size(),
+                            "failedProviders", failedProviders));
 
             if (successfulDrafts.isEmpty()) {
                 String msg = "All providers failed: " + failedProviders;
                 log.error("[orchestrator] {}", msg);
                 persistTrace(traceId, userQuery, allDrafts, null, null, null, startTime);
-                return errorResponse(traceId, msg, failedProviders);
+                FinalResponse response = errorResponse(traceId, msg, failedProviders);
+                emitFailure(traceId, "ERROR", msg, startTime, response);
+                return response;
             }
 
             // 3. Review phases (Critic + Verifier in parallel)
+            emit(traceId, "REVIEW", "running", "Critic and verifier phases started", startTime,
+                    Map.of("drafts", successfulDrafts.size()));
             ReviewPhaseResult review = runReviewPhases(traceId, userQuery, successfulDrafts);
             CriticResult criticResult = review.criticResult();
             VerifierBatchResult verifierBatchResult = review.verifierBatchResult();
@@ -151,6 +183,9 @@ public class ReasoningOrchestrator {
             if (!enforceConstraintVerifier) {
                 log.info("[orchestrator] Verifier completed in advisory mode for taskType={}", taskType);
             }
+            emit(traceId, "REVIEW", "done", "Review phases completed", startTime,
+                    Map.of("criticSuccess", criticResult != null && criticResult.isSuccess(),
+                            "verifierMode", enforceConstraintVerifier ? "enforced" : "advisory"));
 
             // 3a. Failure handler: constraint/verifier authority gates all downstream phases.
             DraftFilterResult filteredInitial = filterConstraintValidDrafts(
@@ -162,12 +197,22 @@ public class ReasoningOrchestrator {
                 log.warn("[orchestrator] No valid drafts after verifier/constraint filtering");
                 FinalResponse failure = constraintFailureResponse(traceId, failedAndRejected);
                 persistTrace(traceId, userQuery, allDrafts, criticResult, null, failure, startTime);
+                emitFailure(traceId, "ERROR", failure.message(), startTime, failure);
                 return failure;
             }
+            emit(traceId, "VERIFY", "done", "Constraint filtering completed", startTime,
+                    Map.of("validDrafts", constraintValidDrafts.size(),
+                            "rejectedProviders", filteredInitial.invalidProviders(),
+                            "verifierMode", enforceConstraintVerifier ? "enforced" : "advisory"));
 
             // 4. Judge phase (task-aware + verifier guillotine)
+            emit(traceId, "JUDGE", "running", "Judge phase started", startTime,
+                    Map.of("candidateDrafts", constraintValidDrafts.size()));
             JudgeResult judgeResult = runJudgePhase(
                     constraintValidDrafts, criticResult, effectiveVerifierBatchResult, taskType);
+            emit(traceId, "JUDGE", "done", "Judge selected " + judgeResult.winnerProvider(), startTime,
+                    Map.of("winnerProvider", judgeResult.winnerProvider(),
+                            "winnerScore", judgeResult.winnerScore()));
 
             // 5. Premium escalation (only when routing is enabled)
             List<DraftResult> finalDrafts = constraintValidDrafts;
@@ -186,6 +231,8 @@ public class ReasoningOrchestrator {
                     log.info("[orchestrator] Escalation triggered with {} premium providers",
                             escalationProviders.size());
                     metrics.recordEscalation();
+                    emit(traceId, "ESCALATE", "running", "Premium escalation triggered", startTime,
+                            Map.of("providers", escalationProviders.stream().map(LlmAdapter::providerName).toList()));
 
                     List<DraftResult> escalationDrafts = runDraftPhase(escalationProviders, draftRequest);
                     traceDrafts.addAll(escalationDrafts);
@@ -219,6 +266,7 @@ public class ReasoningOrchestrator {
                             log.warn("[orchestrator] No valid drafts after escalation verifier/constraint filtering");
                             FinalResponse failure = constraintFailureResponse(traceId, finalFailed);
                             persistTrace(traceId, userQuery, traceDrafts, finalCritic, null, failure, startTime);
+                            emitFailure(traceId, "ERROR", failure.message(), startTime, failure);
                             return failure;
                         }
 
@@ -226,6 +274,8 @@ public class ReasoningOrchestrator {
                                 effectiveEscalatedVerifier, taskType);
                         finalDrafts = filteredEscalated.validDrafts();
                     }
+                    emit(traceId, "ESCALATE", "done", "Premium escalation completed", startTime,
+                            Map.of("successfulDrafts", successfulEscalation.size()));
                 }
             }
 
@@ -243,6 +293,12 @@ public class ReasoningOrchestrator {
                     finalVerifier,
                     finalCritic
             ));
+            emit(traceId, "SYNTHESIS", synthesisResult != null && synthesisResult.isSuccess() ? "done" : "degraded",
+                    synthesisResult != null && synthesisResult.isSuccess()
+                            ? "Synthesis completed"
+                            : "Synthesis unavailable; using judge winner", startTime,
+                    Map.of("provider", synthesisResult == null ? "none" : synthesisResult.provider(),
+                            "success", synthesisResult != null && synthesisResult.isSuccess()));
 
             String finalAnswer = winner.answer();
             double finalConfidence = winner.confidence();
@@ -279,13 +335,22 @@ public class ReasoningOrchestrator {
 
             // 7. Async trace persistence
             persistTrace(traceId, userQuery, traceDrafts, finalCritic, finalJudge, response, startTime);
+            emit(traceId, "TRACE", "queued", "Trace persistence queued", startTime,
+                    Map.of("totalDrafts", traceDrafts.size()));
+            emit(traceId, "COMPLETE", "done", "Reasoning pipeline completed", startTime,
+                    Map.of("response", response,
+                            "winnerProvider", winner.provider(),
+                            "taskType", taskType.name(),
+                            "totalLatencyMs", totalLatency));
 
             return response;
 
         } catch (Exception e) {
             long totalLatency = System.currentTimeMillis() - startTime;
             log.error("[orchestrator] Unexpected error after {}ms: {}", totalLatency, e.getMessage(), e);
-            return errorResponse(traceId, "Internal orchestration error: " + e.getMessage());
+            FinalResponse response = errorResponse(traceId, "Internal orchestration error: " + e.getMessage());
+            emitFailure(traceId, "ERROR", response.judgeReason(), startTime, response);
+            return response;
         } finally {
             MDC.remove(CouncilConstants.MDC_TRACE_ID);
         }
@@ -662,6 +727,27 @@ public class ReasoningOrchestrator {
         long totalLatency = System.currentTimeMillis() - startTime;
         traceService.persistAsync(traceId, userQuery, allDrafts, criticResult,
                 judgeResult, response, totalLatency);
+    }
+
+    private void emit(String traceId,
+                      String phase,
+                      String status,
+                      String message,
+                      long startTime,
+                      Map<String, Object> details) {
+        if (eventBroadcaster == null) {
+            return;
+        }
+        eventBroadcaster.publish(traceId, phase, status, message,
+                System.currentTimeMillis() - startTime, details);
+    }
+
+    private void emitFailure(String traceId,
+                             String phase,
+                             String message,
+                             long startTime,
+                             FinalResponse response) {
+        emit(traceId, phase, "failed", message, startTime, Map.of("response", response));
     }
 
     private FinalResponse errorResponse(String traceId, String error) {

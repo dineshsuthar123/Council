@@ -27,5 +27,20 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    @Bean(name = "reasoningRunExecutor")
+    public Executor reasoningRunExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(12);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("reasoning-run-");
+        executor.setWaitForTasksToCompleteOnShutdown(false);
+        executor.setRejectedExecutionHandler((r, e) ->
+                org.slf4j.LoggerFactory.getLogger(AsyncConfig.class)
+                        .warn("Reasoning run queue full - rejecting async run"));
+        executor.initialize();
+        return executor;
+    }
 }
 

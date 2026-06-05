@@ -3,6 +3,7 @@ package com.council.orchestrator;
 import com.council.api.dto.FinalResponse;
 import com.council.config.CouncilProperties;
 import com.council.critic.CriticEngine;
+import com.council.events.PipelineEventBroadcaster;
 import com.council.judge.DeterministicJudge;
 import com.council.judge.PromptClassifier;
 import com.council.judge.SpecificityScorer;
@@ -39,6 +40,7 @@ class ReasoningOrchestratorTest {
     private DeterministicJudge judge;
     private TraceService traceService;
     private OrchestrationMetrics metrics;
+    private PipelineEventBroadcaster eventBroadcaster;
     private ReasoningOrchestrator orchestrator;
 
     @BeforeEach
@@ -48,6 +50,7 @@ class ReasoningOrchestratorTest {
         verifierEngine = mock(VerifierEngine.class);
         synthesizerEngine = mock(SynthesizerEngine.class);
         traceService = mock(TraceService.class);
+        eventBroadcaster = mock(PipelineEventBroadcaster.class);
         metrics = new OrchestrationMetrics(new SimpleMeterRegistry());
 
         CouncilProperties props = new CouncilProperties();
@@ -73,7 +76,8 @@ class ReasoningOrchestratorTest {
                 .thenReturn(SynthesisResult.failure("none", "none", "synthesis unavailable", 0));
 
         orchestrator = new ReasoningOrchestrator(registry, criticEngine, verifierEngine, synthesizerEngine, judge,
-                new PromptClassifier(), traceService, metrics, props, selectionStrategy, concurrencyLimiter);
+                new PromptClassifier(), traceService, metrics, props, selectionStrategy, concurrencyLimiter,
+                eventBroadcaster);
     }
 
     /* ── Happy path: all providers succeed ─────────────────────────── */
@@ -119,6 +123,8 @@ class ReasoningOrchestratorTest {
         // Trace should be persisted
         verify(traceService).persistAsync(anyString(), eq("What is Java?"),
                 any(), any(), any(), any(), anyLong());
+        verify(eventBroadcaster).publish(eq(response.traceId()), eq("COMPLETE"), eq("done"),
+                anyString(), anyLong(), argThat(details -> details.containsKey("response")));
     }
 
     /* ── Partial failure: one provider fails ───────────────────────── */
@@ -357,7 +363,8 @@ class ReasoningOrchestratorTest {
 
         return new ReasoningOrchestrator(localRegistry, localCritic, localVerifier, localSynthesizer,
                 new DeterministicJudge(props, new SpecificityScorer()), new PromptClassifier(),
-                localTraceService, localMetrics, props, localSelectionStrategy, new ProviderConcurrencyLimiter());
+                localTraceService, localMetrics, props, localSelectionStrategy, new ProviderConcurrencyLimiter(),
+                mock(PipelineEventBroadcaster.class));
     }
 }
 
