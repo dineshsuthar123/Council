@@ -252,6 +252,48 @@ class ReasoningOrchestratorTest {
     }
 
     @Test
+    @DisplayName("Final response separates answer quality, winner confidence, and model agreement")
+    void finalResponseSeparatesQualityConfidenceAndAgreement() {
+        String synthesizedAnswer = """
+                During a traffic spike with Redis partially degraded, PostgreSQL read replicas 2 seconds behind,
+                and Kafka consumers lagging, the redirect endpoint should return 404 Not Found because the
+                short URL was deleted 1 second ago. To prevent stale redirects after deletion, write a
+                deleted_at/version/tombstone to the primary database, invalidate or overwrite Redis immediately,
+                and store a short-lived DELETED/negative-cache tombstone. To handle cache stampede during Redis
+                degradation, implement singleflight/request coalescing/per-key lock/distributed lock. The redirect
+                path should not trust a PostgreSQL replica that can be 2 seconds stale and instead use the Redis
+                tombstone, a primary read, or a deletion/version check that is safe under lag. Prioritize redirect
+                correctness over analytics freshness and do not return a cached lease or maybe stale response to
+                the browser. The pseudocode for the redirect path should be: IF Redis has valid redirect THEN
+                return redirect; ELSE IF Redis has tombstone THEN return 404; ELSE IF primary DB read shows active
+                THEN return redirect; ELSE return 404. The tradeoffs should prioritize redirect correctness and
+                consistency over analytics freshness and availability.
+                """;
+        LlmAdapter nvidia = mockAdapter("nvidia", "nvidia-model",
+                DraftResult.success("nvidia", "nvidia-model", synthesizedAnswer, "summary",
+                        List.of(), List.of(), 0.95, 700, "raw"));
+        LlmAdapter groq = mockAdapter("groq", "groq-model",
+                DraftResult.success("groq", "groq-model", synthesizedAnswer, "summary",
+                        List.of(), List.of(), 0.95, 700, "raw"));
+
+        when(registry.getAvailableDraftProviders()).thenReturn(List.of(nvidia, groq));
+        when(criticEngine.critique(any())).thenReturn(
+                CriticResult.failure("critic", "critic-model", "critic unavailable", 0));
+        when(synthesizerEngine.synthesize(any())).thenReturn(SynthesisResult.success(
+                "synth", "synth-model", synthesizedAnswer, "Strong but not perfect",
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                0.95, 100, "raw-synthesis"));
+
+        FinalResponse response = orchestrator.reason(urlShortenerIncidentQuery());
+
+        assertTrue(response.answerQuality() >= 0.82 && response.answerQuality() <= 0.88);
+        assertEquals(response.answerQuality(), response.confidence(), 0.001);
+        assertNotNull(response.winnerConfidence());
+        assertNotNull(response.modelAgreement());
+        assertTrue(response.modelAgreement() >= 0.90, "Equal strong drafts should show high agreement");
+    }
+
+    @Test
     @DisplayName("Global invalidity: returns NO_VALID_DESIGN and skips synthesis")
     void allDraftsInvalid_stopsPipelineWithConstraintError() {
         LlmAdapter geminiAdapter = mockAdapter("gemini", "gemini-2.5-pro",

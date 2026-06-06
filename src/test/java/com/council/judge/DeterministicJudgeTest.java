@@ -232,6 +232,35 @@ class DeterministicJudgeTest {
     }
 
     @Test
+    @DisplayName("Strong answer that rejects stale lease is quality capped, not hard capped")
+    void strongAnswerRejectingStaleLeaseIsNotHardCapped() {
+        DraftResult strongButNotPerfect = DraftResult.success("nvidia", "nvidia-model",
+                """
+                During a traffic spike with Redis partially degraded, PostgreSQL read replicas 2 seconds behind,
+                and Kafka consumers lagging, the redirect endpoint should return 404 Not Found because the
+                short URL was deleted 1 second ago. To prevent stale redirects after deletion, write a
+                deleted_at/version/tombstone to the primary database, invalidate or overwrite Redis immediately,
+                and store a short-lived DELETED/negative-cache tombstone. To handle cache stampede during Redis
+                degradation, implement singleflight/request coalescing/per-key lock/distributed lock. The redirect
+                path should not trust a PostgreSQL replica that can be 2 seconds stale and instead use the Redis
+                tombstone, a primary read, or a deletion/version check that is safe under lag. Prioritize redirect
+                correctness over analytics freshness and do not return a cached lease or maybe stale response to
+                the browser. The pseudocode for the redirect path should be: IF Redis has valid redirect THEN
+                return redirect; ELSE IF Redis has tombstone THEN return 404; ELSE IF primary DB read shows active
+                THEN return redirect; ELSE return 404. The tradeoffs should prioritize redirect correctness and
+                consistency over analytics freshness and availability.
+                """,
+                "Uses tombstone, primary read, version check, singleflight, analytics separation, and rejects stale leases.",
+                List.of(), List.of(), 0.95, 1000, "raw");
+
+        JudgeResult result = judge.evaluate(List.of(strongButNotPerfect), null);
+
+        assertEquals("nvidia", result.winnerProvider());
+        assertTrue(result.winnerScore() >= 0.82 && result.winnerScore() <= 0.88,
+                "This answer should score as strong but not elite because tombstone loses precedence in pseudocode");
+    }
+
+    @Test
     @DisplayName("Strong stale deletion answer keeps elite confidence")
     void strongStaleDeletionAnswerKeepsHighConfidence() {
         DraftResult strong = DraftResult.success("claude", "claude-test",

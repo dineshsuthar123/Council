@@ -322,8 +322,10 @@ function renderAnswer(response) {
     return;
   }
 
-  const confidence = Math.max(0, Math.min(1, Number(response.confidence || 0)));
-  const confidencePct = Math.round(confidence * 100);
+  const answerQuality = scoreValue(response.answerQuality ?? response.confidence);
+  const winnerConfidence = scoreValue(response.winnerConfidence ?? response.confidence);
+  const modelAgreement = response.modelAgreement == null ? null : scoreValue(response.modelAgreement);
+  const confidencePct = Math.round(answerQuality * 100);
   const providers = listText(response.usedProviders);
   const failed = listText(response.failedProviders);
 
@@ -338,9 +340,14 @@ function renderAnswer(response) {
           ${response.judgeReason ? `<span class="meta-pill">Judge: ${escapeHtml(trimText(response.judgeReason, 80))}</span>` : ""}
         </div>
       </div>
-      <div class="confidence-ring" style="--confidence-angle: ${confidence * 360}deg" aria-label="Confidence ${confidencePct}%">
+      <div class="confidence-ring" style="--confidence-angle: ${answerQuality * 360}deg" aria-label="Answer quality ${confidencePct}%">
         <span>${confidencePct}%</span>
       </div>
+    </div>
+    <div class="score-grid" aria-label="Council scoring breakdown">
+      ${scoreCard("Answer quality", answerQuality, "Absolute quality of the final answer.")}
+      ${scoreCard("Winner confidence", winnerConfidence, "How strongly the judge preferred the selected provider.")}
+      ${modelAgreement == null ? "" : scoreCard("Model agreement", modelAgreement, "How closely provider scores clustered.")}
     </div>
     <div class="answer-body">${formatAnswer(response.finalAnswer || "No final answer returned.")}</div>
   `;
@@ -556,6 +563,10 @@ async function fetchJson(url, options = {}) {
 }
 
 function formatAnswer(value) {
+  if (shouldStructureDenseAnswer(value)) {
+    return formatDenseAnswer(value);
+  }
+
   const safe = escapeHtml(value);
   const lines = safe.split(/\r?\n/);
   const html = [];
@@ -598,6 +609,92 @@ function formatAnswer(value) {
 
   if (inList) html.push("</ul>");
   return html.join("");
+}
+
+function shouldStructureDenseAnswer(value = "") {
+  const text = String(value).trim();
+  return text.length > 550 && !/\n\s*\n/.test(text) && sentenceSplit(text).length >= 5;
+}
+
+function formatDenseAnswer(value = "") {
+  const sentences = sentenceSplit(value);
+  const sections = [];
+  let current = sectionForSentence(sentences[0] || "");
+
+  for (const sentence of sentences) {
+    const next = sectionForSentence(sentence);
+    if (!current || next.title !== current.title) {
+      current = next;
+      sections.push(current);
+    }
+    current.items.push(sentence);
+  }
+
+  return sections.map((section) => `
+    <section class="answer-section">
+      <h3>${escapeHtml(section.title)}</h3>
+      ${section.title === "Pseudocode"
+        ? `<pre class="code-block"><code>${escapeHtml(pseudocodeLines(section.items.join(" ")))}</code></pre>`
+        : section.items.length > 1
+          ? `<ul>${section.items.map((item) => `<li>${inlineCode(escapeHtml(item))}</li>`).join("")}</ul>`
+          : `<p>${inlineCode(escapeHtml(section.items[0] || ""))}</p>`}
+    </section>
+  `).join("");
+}
+
+function sectionForSentence(sentence = "") {
+  const lower = sentence.toLowerCase();
+  const title = lower.includes("pseudocode")
+    ? "Pseudocode"
+    : lower.includes("metric") || lower.includes("monitor") || lower.includes("alert") || lower.includes("logs")
+      ? "Observability"
+      : lower.includes("tradeoff") || lower.includes("availability") && lower.includes("consistency")
+        ? "Tradeoffs"
+        : lower.includes("weaker system") || lower.includes("mistake")
+          ? "Common mistakes"
+          : lower.includes("stampede") || lower.includes("singleflight") || lower.includes("coalescing") || lower.includes("lock")
+            ? "Stampede control"
+            : lower.includes("tombstone") || lower.includes("negative-cache") || lower.includes("deleted_at") || lower.includes("stale redirects")
+              ? "Deletion safety"
+              : lower.includes("replica") || lower.includes("primary read") || lower.includes("version check")
+                ? "Replica safety"
+                : lower.includes("analytics") || lower.includes("dashboard") || lower.includes("kafka")
+                  ? "Analytics separation"
+                  : "Decision";
+  return { title, items: [] };
+}
+
+function sentenceSplit(value = "") {
+  return String(value)
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function pseudocodeLines(value = "") {
+  return value
+    .replace(/^.*?pseudocode[^:]*:\s*/i, "")
+    .replace(/\bELSE IF\b/g, "\nELSE IF")
+    .replace(/\bELSE\b/g, "\nELSE")
+    .replace(/\bIF\b/g, "IF")
+    .replace(/;\s*/g, ";\n")
+    .trim();
+}
+
+function scoreCard(label, value, helper) {
+  const pct = Math.round(scoreValue(value) * 100);
+  return `
+    <div class="score-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${pct}%</strong>
+      <small>${escapeHtml(helper)}</small>
+    </div>
+  `;
+}
+
+function scoreValue(value) {
+  return Math.max(0, Math.min(1, Number(value || 0)));
 }
 
 function inlineCode(value) {
