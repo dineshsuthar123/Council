@@ -311,8 +311,7 @@ public class ReasoningOrchestrator {
                     && !synthesisResult.synthesizedAnswer().isBlank()) {
                 finalAnswer = synthesisResult.synthesizedAnswer();
                 if (synthesisResult.confidence() > 0.0) {
-                    finalConfidence = calibrateFinalConfidence(
-                            finalAnswer, synthesisResult.summary(), synthesisResult.confidence());
+                    finalConfidence = synthesisResult.confidence();
                 }
             } else {
                 String synthesisError = synthesisResult == null
@@ -321,6 +320,11 @@ public class ReasoningOrchestrator {
                 log.warn("[orchestrator] Synthesis unavailable, falling back to winner draft answer: {}",
                         synthesisError);
             }
+            if (FinalAnswerCompletenessGuard.hasDanglingPseudocodePromise(finalAnswer)) {
+                log.warn("[orchestrator] Final answer promised pseudocode but did not include concrete control flow");
+            }
+            finalAnswer = FinalAnswerCompletenessGuard.repair(userQuery, finalAnswer);
+            finalConfidence = calibrateFinalConfidence(finalAnswer, null, finalConfidence);
 
             FinalResponse response = new FinalResponse(
                     traceId,

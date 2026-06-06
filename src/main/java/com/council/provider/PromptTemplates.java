@@ -241,6 +241,8 @@ public final class PromptTemplates {
                             - Fill missing gaps.
                             - Tighten weak explanations.
                             - Make the final answer more operational, more precise, and more realistic than any input draft.
+                            - Do not summarize away required sections from the original prompt.
+                            - Never write "provided below", "as follows", or similar unless the promised content immediately follows in the synthesizedAnswer.
 
                         6. Be structurally clean.
                             - Use a clear architecture.
@@ -249,6 +251,7 @@ public final class PromptTemplates {
                             - Then failure handling.
                             - Then trade-offs or assumptions.
                             - End with a crisp summary.
+                            - If the original prompt asks for pseudocode or an algorithm, include actual code-like control flow with if/else/return statements.
 
                         7. Stay grounded.
                             - Do not invent unsupported facts.
