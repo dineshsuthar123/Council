@@ -104,6 +104,14 @@ public final class ProductionConsistencyCalibrator {
             cap = Math.min(cap, 0.70);
             reasons.add("pseudocode is a prose checklist");
         }
+        if (activeCachePrecedesTombstoneInPseudocode(text)) {
+            cap = Math.min(cap, 0.86);
+            reasons.add("pseudocode checks active cache before deleted tombstone");
+        }
+        if (hasShallowTradeoffStatement(text)) {
+            cap = Math.min(cap, 0.88);
+            reasons.add("tradeoff explanation is directionally correct but shallow");
+        }
 
         return new Calibration(cap, List.copyOf(reasons));
     }
@@ -133,9 +141,37 @@ public final class ProductionConsistencyCalibrator {
     }
 
     private static boolean returnsMaybeStaleLease(String text) {
+        if (containsAny(text, "do not return", "should not return", "must not return",
+                "never return", "not return a cached", "not serve maybe", "do not serve maybe")) {
+            return false;
+        }
         return text.contains("lease")
                 && text.contains("stale")
                 && containsAny(text, "return", "response", "serve");
+    }
+
+    private static boolean activeCachePrecedesTombstoneInPseudocode(String text) {
+        int pseudocode = text.indexOf("pseudocode");
+        if (pseudocode < 0) {
+            return false;
+        }
+        String snippet = text.substring(pseudocode);
+        int tombstone = firstIndexOf(snippet, "tombstone", "deleted");
+        int active = firstIndexOf(snippet, "valid redirect", "cache hit", "active");
+        return active >= 0 && tombstone >= 0 && active < tombstone;
+    }
+
+    private static boolean hasShallowTradeoffStatement(String text) {
+        if (!text.contains("tradeoff") && !text.contains("trade-off")) {
+            return false;
+        }
+        boolean hasDirection = text.contains("prioritize redirect correctness")
+                || text.contains("prioritize correctness")
+                || text.contains("consistency over");
+        boolean hasSeparateBudgets = text.contains("latency")
+                && text.contains("availability")
+                && (text.contains("analytics") || text.contains("eventual consistency"));
+        return hasDirection && !hasSeparateBudgets;
     }
 
     private static boolean reliesOnBestEffortInvalidation(String text,
@@ -161,6 +197,17 @@ public final class ProductionConsistencyCalibrator {
             }
         }
         return false;
+    }
+
+    private static int firstIndexOf(String haystack, String... needles) {
+        int result = -1;
+        for (String needle : needles) {
+            int index = haystack.indexOf(needle);
+            if (index >= 0 && (result < 0 || index < result)) {
+                result = index;
+            }
+        }
+        return result;
     }
 
     private static String normalize(String value) {

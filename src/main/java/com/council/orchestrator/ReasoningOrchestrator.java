@@ -302,7 +302,8 @@ public class ReasoningOrchestrator {
                             "success", synthesisResult != null && synthesisResult.isSuccess()));
 
             String finalAnswer = winner.answer();
-            double finalConfidence = finalJudge.winnerScore();
+            double winnerConfidence = finalJudge.winnerScore();
+            double finalConfidence = winnerConfidence;
 
             if (synthesisResult != null
                     && synthesisResult.isSuccess()
@@ -328,7 +329,7 @@ public class ReasoningOrchestrator {
                     finalDrafts.stream().map(DraftResult::provider).toList(),
                     finalFailed,
                     finalConfidence
-            );
+            ).withScoreBreakdown(finalConfidence, winnerConfidence, modelAgreement(finalJudge.rankings()));
 
             long totalLatency = System.currentTimeMillis() - startTime;
             metrics.recordTotalLatency(totalLatency);
@@ -670,6 +671,16 @@ public class ReasoningOrchestrator {
                     confidence, calibrated, calibration.reasons());
         }
         return calibrated;
+    }
+
+    private double modelAgreement(List<JudgeRanking> rankings) {
+        if (rankings == null || rankings.size() <= 1) {
+            return 1.0;
+        }
+        double max = rankings.stream().mapToDouble(JudgeRanking::score).max().orElse(0.0);
+        double min = rankings.stream().mapToDouble(JudgeRanking::score).min().orElse(0.0);
+        double spread = Math.max(0.0, max - min);
+        return Math.max(0.0, Math.min(0.95, 1.0 - (spread / 0.50)));
     }
 
     private boolean containsAny(String value, String... needles) {
