@@ -329,76 +329,11 @@ public class DeterministicJudge {
     }
 
     private double calibratedConfidence(DraftResult draft) {
-        return Math.min(CouncilUtils.clamp01(draft.confidence()), productionConsistencyScoreCap(draft));
+        return ProductionConsistencyCalibrator.capConfidence(draft.answer(), draft.summary(), draft.confidence());
     }
 
     private double productionConsistencyScoreCap(DraftResult draft) {
-        String answer = normalize(draft.answer() + " " + draft.summary());
-        if (!looksLikeStaleDeletionConsistencyAnswer(answer)) {
-            return 1.0;
-        }
-
-        int missing = 0;
-        boolean hasTombstone = containsAny(answer, "tombstone", "negative cache", "negative-cache",
-                "deleted marker", "deletion marker", "cache delete marker");
-        boolean hasPrimarySafeRead = containsAny(answer, "primary", "leader", "bypass replica",
-                "avoid replica", "source of truth", "read-your-writes", "replica lag window");
-        boolean hasStampedeCoalescing = containsAny(answer, "singleflight", "single flight",
-                "request coalescing", "request collapsing", "per-key lock", "per key lock",
-                "distributed lock", "mutex", "dogpile");
-        boolean separatesAnalytics = containsAny(answer, "analytics lag", "dashboard",
-                "consumer lag", "redirect correctness", "correctness is independent",
-                "does not change the redirect");
-        boolean hasVersionOrDeletedAt = containsAny(answer, "deleted_at", "deleted at",
-                "version", "row_version", "generation", "delete version");
-        boolean hasCorrectStatus = containsAny(answer, "404", "410", "not found", "gone");
-
-        if (!hasTombstone) {
-            missing++;
-        }
-        if (!hasPrimarySafeRead && !hasVersionOrDeletedAt) {
-            missing++;
-        }
-        if (!hasStampedeCoalescing) {
-            missing++;
-        }
-        if (!separatesAnalytics) {
-            missing++;
-        }
-        if (!hasCorrectStatus) {
-            missing++;
-        }
-
-        double cap = 1.0;
-        if (missing >= 4) {
-            cap = 0.68;
-        } else if (missing >= 3) {
-            cap = 0.72;
-        } else if (missing >= 2) {
-            cap = 0.80;
-        }
-
-        if (treatsRedisTtlAsEnough(answer) && !hasTombstone) {
-            cap = Math.min(cap, 0.65);
-        }
-        if (answer.contains("replica") && !hasPrimarySafeRead && !hasVersionOrDeletedAt) {
-            cap = Math.min(cap, 0.65);
-        }
-
-        return cap;
-    }
-
-    private boolean looksLikeStaleDeletionConsistencyAnswer(String answer) {
-        return answer.contains("redis")
-                && (answer.contains("postgres") || answer.contains("replica"))
-                && (answer.contains("deleted") || answer.contains("deletion"))
-                && (answer.contains("kafka") || answer.contains("analytics"))
-                && (answer.contains("redirect") || answer.contains("url"));
-    }
-
-    private boolean treatsRedisTtlAsEnough(String answer) {
-        return (answer.contains("ttl") || answer.contains("expiration") || answer.contains("expire"))
-                && containsAny(answer, "prevent stale", "avoid stale", "stale redirects", "cache invalidation");
+        return ProductionConsistencyCalibrator.evaluate(draft.answer(), draft.summary()).cap();
     }
 
     private String productionConsistencyCapsSummary(List<DraftResult> drafts) {
@@ -407,18 +342,5 @@ public class DeterministicJudge {
                 .filter(entry -> entry.getValue() < 1.0)
                 .map(entry -> "%s<=%.2f".formatted(entry.getKey(), entry.getValue()))
                 .collect(Collectors.joining(", "));
-    }
-
-    private boolean containsAny(String haystack, String... needles) {
-        for (String needle : needles) {
-            if (haystack.contains(needle)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private String normalize(String value) {
-        return value == null ? "" : value.toLowerCase(Locale.ROOT);
     }
 }

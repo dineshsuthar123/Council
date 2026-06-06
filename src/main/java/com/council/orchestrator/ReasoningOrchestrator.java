@@ -7,6 +7,7 @@ import com.council.critic.CriticEngine;
 import com.council.events.PipelineEventBroadcaster;
 import com.council.judge.DeterministicJudge;
 import com.council.judge.PromptClassifier;
+import com.council.judge.ProductionConsistencyCalibrator;
 import com.council.judge.TaskType;
 import com.council.metrics.OrchestrationMetrics;
 import com.council.model.*;
@@ -301,7 +302,7 @@ public class ReasoningOrchestrator {
                             "success", synthesisResult != null && synthesisResult.isSuccess()));
 
             String finalAnswer = winner.answer();
-            double finalConfidence = winner.confidence();
+            double finalConfidence = finalJudge.winnerScore();
 
             if (synthesisResult != null
                     && synthesisResult.isSuccess()
@@ -309,7 +310,8 @@ public class ReasoningOrchestrator {
                     && !synthesisResult.synthesizedAnswer().isBlank()) {
                 finalAnswer = synthesisResult.synthesizedAnswer();
                 if (synthesisResult.confidence() > 0.0) {
-                    finalConfidence = synthesisResult.confidence();
+                    finalConfidence = calibrateFinalConfidence(
+                            finalAnswer, synthesisResult.summary(), synthesisResult.confidence());
                 }
             } else {
                 String synthesisError = synthesisResult == null
@@ -657,6 +659,17 @@ public class ReasoningOrchestrator {
                 "system",
                 "throughput",
                 "tps");
+    }
+
+    private double calibrateFinalConfidence(String answer, String summary, double confidence) {
+        ProductionConsistencyCalibrator.Calibration calibration =
+                ProductionConsistencyCalibrator.evaluate(answer, summary);
+        double calibrated = Math.min(confidence, calibration.cap());
+        if (calibration.applied()) {
+            log.info("[orchestrator] Final confidence capped from {} to {} by production consistency calibration: {}",
+                    confidence, calibrated, calibration.reasons());
+        }
+        return calibrated;
     }
 
     private boolean containsAny(String value, String... needles) {

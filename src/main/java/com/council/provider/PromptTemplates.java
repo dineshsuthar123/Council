@@ -425,12 +425,14 @@ public final class PromptTemplates {
                 - On deletion, write deleted_at/version/tombstone to the primary database, invalidate or overwrite Redis immediately, and store a short-lived DELETED/negative-cache tombstone.
                 - During the replica-lag window, the redirect path must not trust a PostgreSQL replica that can be 2 seconds stale. It must use the Redis tombstone, a primary read, or a deletion/version check that is safe under lag.
                 - Cache stampede handling must include singleflight/request coalescing/per-key lock/distributed lock. Retry/backoff alone is not enough because it can still fan out many identical DB reads.
+                - Do not return a cached "lease" or "maybe stale" response to the browser. A redirect endpoint must make a binary correctness decision: redirect only if active is proven, otherwise return 404/410.
                 - Pseudocode must be concrete control flow, not a prose checklist.
                 - Metrics/logs/alerts must distinguish redirect correctness from analytics lag and include Redis p95/p99 latency/timeouts, DB replica lag, primary fallback rate, tombstone hits, stale-cache prevention, lock wait/load count, Kafka consumer lag, and dashboard freshness.
 
                 Scoring caps for the critic:
                 - If a draft treats Redis TTL/expiration as sufficient stale-delete protection, cap feasibilityScore at 0.60.
                 - If a draft trusts lagging replicas despite 2 second replica lag and a 1 second old deletion, cap feasibilityScore at 0.55.
+                - If a draft allows a maybe-stale lease response on the synchronous redirect path, cap feasibilityScore at 0.55.
                 - If a draft misses two of tombstone/negative cache, primary-read or safe version check, singleflight/coalescing, analytics-vs-redirect separation, cap feasibilityScore at 0.70.
                 - If a draft misses three or more of those controls, cap feasibilityScore at 0.55 and failureDepthScore at 0.65.
                 - If pseudocode is only a plain-English list, cap failureDepthScore at 0.65.
