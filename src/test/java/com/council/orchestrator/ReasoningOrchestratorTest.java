@@ -294,6 +294,37 @@ class ReasoningOrchestratorTest {
     }
 
     @Test
+    @DisplayName("Final response repairs missing promised pseudocode before quality calibration")
+    void finalResponseRepairsMissingPromisedPseudocode() {
+        String synthesizedAnswer = """
+                The redirect endpoint should return 404 Not Found or 410 Gone because the short URL was deleted
+                1 second ago. Prevent stale redirects by writing deleted_at/version/tombstone to the primary DB,
+                writing a Redis DELETED negative-cache tombstone, and never trusting a 2-second-lag PostgreSQL
+                replica during the deletion-safety window. Use primary reads or safe version checks, coalesce
+                cache misses with singleflight/request coalescing/per-key lock, and separate Kafka analytics lag
+                from redirect correctness. A concrete algorithm/pseudocode for the redirect path is provided below.
+                """;
+        LlmAdapter nvidia = mockAdapter("nvidia", "nvidia-model",
+                DraftResult.success("nvidia", "nvidia-model", synthesizedAnswer, "summary",
+                        List.of(), List.of(), 0.95, 700, "raw"));
+
+        when(registry.getAvailableDraftProviders()).thenReturn(List.of(nvidia));
+        when(criticEngine.critique(any())).thenReturn(
+                CriticResult.failure("critic", "critic-model", "critic unavailable", 0));
+        when(synthesizerEngine.synthesize(any())).thenReturn(SynthesisResult.success(
+                "synth", "synth-model", synthesizedAnswer, "Strong answer missing promised pseudocode",
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                0.95, 100, "raw-synthesis"));
+
+        FinalResponse response = orchestrator.reason(urlShortenerIncidentQuery() + "\nGive concrete pseudocode.");
+
+        assertTrue(response.finalAnswer().contains("Concrete redirect algorithm"));
+        assertTrue(response.finalAnswer().contains("RedirectResult resolve"));
+        assertTrue(response.answerQuality() >= 0.82,
+                "Completeness repair should prevent a strong answer from being treated like a 55% failure");
+    }
+
+    @Test
     @DisplayName("Global invalidity: returns NO_VALID_DESIGN and skips synthesis")
     void allDraftsInvalid_stopsPipelineWithConstraintError() {
         LlmAdapter geminiAdapter = mockAdapter("gemini", "gemini-2.5-pro",

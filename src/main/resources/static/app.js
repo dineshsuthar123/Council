@@ -571,9 +571,31 @@ function formatAnswer(value) {
   const lines = safe.split(/\r?\n/);
   const html = [];
   let inList = false;
+  let inCode = false;
+  const codeLines = [];
 
   for (const line of lines) {
     const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      if (inCode) {
+        html.push(`<pre class="code-block"><code>${codeLines.join("\n")}</code></pre>`);
+        codeLines.length = 0;
+        inCode = false;
+      } else {
+        if (inList) {
+          html.push("</ul>");
+          inList = false;
+        }
+        inCode = true;
+      }
+      continue;
+    }
+
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+
     if (!trimmed) {
       if (inList) {
         html.push("</ul>");
@@ -608,6 +630,7 @@ function formatAnswer(value) {
   }
 
   if (inList) html.push("</ul>");
+  if (inCode) html.push(`<pre class="code-block"><code>${codeLines.join("\n")}</code></pre>`);
   return html.join("");
 }
 

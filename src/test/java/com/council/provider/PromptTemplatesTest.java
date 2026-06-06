@@ -170,6 +170,8 @@ class PromptTemplatesTest {
         assertTrue(prompt.contains("Merge, do not vote"));
         assertTrue(prompt.contains("Hard reject invalid content"));
         assertTrue(prompt.contains("Resolve conflicts decisively"));
+        assertTrue(prompt.contains("Never write \"provided below\""));
+        assertTrue(prompt.contains("include actual code-like control flow"));
         assertTrue(prompt.contains("synthesizedAnswer"));
         assertTrue(prompt.contains("mergedStrengths"));
         assertTrue(prompt.contains("discardedClaims"));
