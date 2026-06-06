@@ -94,6 +94,7 @@ class PromptTemplatesTest {
         assertTrue(prompt.contains("DELETED/negative-cache tombstone"));
         assertTrue(prompt.contains("must not trust a PostgreSQL replica"));
         assertTrue(prompt.contains("singleflight/request coalescing"));
+        assertTrue(prompt.contains("Do not return a cached \"lease\" or \"maybe stale\" response"));
         assertTrue(prompt.contains("Redirect correctness is authoritative over analytics freshness"));
         assertTrue(prompt.contains("cap feasibilityScore at 0.55"));
     }

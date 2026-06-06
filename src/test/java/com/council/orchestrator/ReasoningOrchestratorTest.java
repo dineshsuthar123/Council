@@ -216,6 +216,42 @@ class ReasoningOrchestratorTest {
     }
 
     @Test
+    @DisplayName("Synthesis confidence is capped for unsafe stale redirect answers")
+    void synthesisConfidenceIsCappedForUnsafeStaleRedirectAnswer() {
+        String synthesizedAnswer = """
+                For the deleted short URL redirect, Redis may be degraded, PostgreSQL replicas may lag,
+                and Kafka analytics consumers may be behind. Use a cache-aside lease mechanism:
+                if another request is loading the alias, return a cached lease response indicating
+                the data might be stale. Query PostgreSQL primary or a read replica depending on the
+                configured consistency level. Send an invalidation request to Redis when the owner deletes it.
+                """;
+        LlmAdapter adapter = mockAdapter("gemini", "gemini-2.5-pro",
+                DraftResult.success("gemini", "gemini-2.5-pro",
+                        """
+                        Return 404. Use deleted_at/version on the primary DB, write a Redis DELETED
+                        tombstone, bypass replicas during the lag window, coalesce cache misses with
+                        singleflight, and treat Kafka analytics lag as dashboard-only.
+                        Pseudocode: if tombstone return 404; else read primary; else redirect active version.
+                        """,
+                        "Strong stale deletion answer",
+                        List.of(), List.of(), 0.95, 700, "raw"));
+
+        when(registry.getAvailableDraftProviders()).thenReturn(List.of(adapter));
+        when(criticEngine.critique(any())).thenReturn(
+                CriticResult.failure("critic", "critic-model", "critic unavailable", 0));
+        when(synthesizerEngine.synthesize(any())).thenReturn(SynthesisResult.success(
+                "synth", "synth-model", synthesizedAnswer, "Unsafe lease response",
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                0.95, 100, "raw-synthesis"));
+
+        FinalResponse response = orchestrator.reason(urlShortenerIncidentQuery());
+
+        assertEquals(synthesizedAnswer, response.finalAnswer());
+        assertTrue(response.confidence() <= 0.55,
+                "Final response confidence must be capped after unsafe synthesis, not restored to 0.95");
+    }
+
+    @Test
     @DisplayName("Global invalidity: returns NO_VALID_DESIGN and skips synthesis")
     void allDraftsInvalid_stopsPipelineWithConstraintError() {
         LlmAdapter geminiAdapter = mockAdapter("gemini", "gemini-2.5-pro",
@@ -344,6 +380,14 @@ class ReasoningOrchestratorTest {
         when(adapter.isEnabled()).thenReturn(true);
         when(adapter.generateDraft(any())).thenReturn(result);
         return adapter;
+    }
+
+    private String urlShortenerIncidentQuery() {
+        return """
+                A URL-shortener uses Redis for redirect cache, PostgreSQL read replicas, Kafka analytics,
+                and redirects. Redis is degraded, replicas are 2 seconds behind, Kafka consumers lag,
+                and the short URL was deleted 1 second ago.
+                """;
     }
 
     private ReasoningOrchestrator orchestratorWithDraftTimeoutSeconds(int timeoutSeconds) {

@@ -192,6 +192,46 @@ class DeterministicJudgeTest {
     }
 
     @Test
+    @DisplayName("Maybe-stale lease response is hard capped for redirect correctness")
+    void maybeStaleLeaseResponseIsHardCapped() {
+        DraftResult dangerous = DraftResult.success("gemini", "gemini-2.5-pro",
+                """
+                For the deleted URL redirect, Redis may be degraded, PostgreSQL replicas may lag,
+                and Kafka analytics consumers may be behind. Use a cache-aside lease mechanism:
+                if the lease holder is loading, return a cached lease response indicating the data
+                might be stale. Query PostgreSQL primary or a read replica depending on configured
+                consistency level. Send an invalidation request to Redis on deletion.
+                """,
+                "Uses Redis leases, PostgreSQL primary or replicas, and Kafka analytics monitoring.",
+                List.of(), List.of(), 0.95, 1000, "raw");
+
+        JudgeResult result = judge.evaluate(List.of(dangerous), null);
+
+        assertTrue(result.winnerScore() <= 0.55,
+                "A redirect path must never score highly if it can return maybe-stale content");
+        assertTrue(result.reason().contains("Production consistency cap applied"));
+    }
+
+    @Test
+    @DisplayName("Primary-or-replica consistency hedging is hard capped under known replica lag")
+    void primaryOrReplicaHedgingIsHardCapped() {
+        DraftResult dangerous = DraftResult.success("gemini", "gemini-2.5-pro",
+                """
+                The redirect should return 404 if deletion is observed. On Redis miss, query
+                PostgreSQL primary or a read replica depending on the configured consistency level.
+                Kafka analytics lag should be monitored separately from redirects. Use cache-aside
+                lease mechanism for Redis stampede and send an invalidation request to Redis when deleted.
+                """,
+                "Redis cache-aside, PostgreSQL primary or read replica, Kafka analytics, deleted URL redirect.",
+                List.of(), List.of(), 0.95, 1000, "raw");
+
+        JudgeResult result = judge.evaluate(List.of(dangerous), null);
+
+        assertTrue(result.winnerScore() <= 0.55,
+                "Known 2 second replica lag with 1 second old deletion must not allow replica hedging");
+    }
+
+    @Test
     @DisplayName("Strong stale deletion answer keeps elite confidence")
     void strongStaleDeletionAnswerKeepsHighConfidence() {
         DraftResult strong = DraftResult.success("claude", "claude-test",
