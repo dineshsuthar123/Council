@@ -349,6 +349,7 @@ function renderAnswer(response) {
       ${scoreCard("Winner confidence", winnerConfidence, "How strongly the judge preferred the selected provider.")}
       ${modelAgreement == null ? "" : scoreCard("Model agreement", modelAgreement, "How closely provider scores clustered.")}
     </div>
+    ${dimensionGrid(response.dimensions)}
     <div class="answer-body">${formatAnswer(response.finalAnswer || "No final answer returned.")}</div>
   `;
 }
@@ -656,7 +657,7 @@ function formatDenseAnswer(value = "") {
   return sections.map((section) => `
     <section class="answer-section">
       <h3>${escapeHtml(section.title)}</h3>
-      ${section.title === "Pseudocode"
+      ${section.title === "Redirect algorithm"
         ? `<pre class="code-block"><code>${escapeHtml(pseudocodeLines(section.items.join(" ")))}</code></pre>`
         : section.items.length > 1
           ? `<ul>${section.items.map((item) => `<li>${inlineCode(escapeHtml(item))}</li>`).join("")}</ul>`
@@ -668,7 +669,12 @@ function formatDenseAnswer(value = "") {
 function sectionForSentence(sentence = "") {
   const lower = sentence.toLowerCase();
   const title = lower.includes("pseudocode")
-    ? "Pseudocode"
+      || lower.includes("algorithm")
+      || lower.includes("if redis")
+      || lower.includes("else if")
+      || lower.includes("primarydb.findbyalias")
+      || lower.includes("resolve(")
+    ? "Redirect algorithm"
     : lower.includes("metric") || lower.includes("monitor") || lower.includes("alert") || lower.includes("logs")
       ? "Observability"
       : lower.includes("tradeoff") || lower.includes("availability") && lower.includes("consistency")
@@ -697,7 +703,7 @@ function sentenceSplit(value = "") {
 
 function pseudocodeLines(value = "") {
   return value
-    .replace(/^.*?pseudocode[^:]*:\s*/i, "")
+    .replace(/^.*?(pseudocode|algorithm)[^:]*:\s*/i, "")
     .replace(/\bELSE IF\b/g, "\nELSE IF")
     .replace(/\bELSE\b/g, "\nELSE")
     .replace(/\bIF\b/g, "IF")
@@ -712,6 +718,56 @@ function scoreCard(label, value, helper) {
       <span>${escapeHtml(label)}</span>
       <strong>${pct}%</strong>
       <small>${escapeHtml(helper)}</small>
+    </div>
+  `;
+}
+
+function dimensionGrid(dimensions) {
+  if (!dimensions || typeof dimensions !== "object" || !Object.keys(dimensions).length) {
+    return "";
+  }
+
+  const order = [
+    ["correct_endpoint_decision", "Endpoint decision"],
+    ["deletion_safety", "Deletion safety"],
+    ["replica_lag_awareness", "Replica lag"],
+    ["stampede_control", "Stampede control"],
+    ["observability", "Observability"],
+    ["tradeoffs", "Tradeoffs"],
+    ["pseudocode", "Pseudocode"],
+    ["common_mistakes", "Common mistakes"]
+  ];
+
+  const rows = order
+    .filter(([key]) => dimensions[key] != null)
+    .map(([key, label]) => {
+      const value = scoreValue(dimensions[key]);
+      const pct = Math.round(value * 100);
+      return `
+        <div class="dimension-row">
+          <div class="dimension-label">
+            <span>${escapeHtml(label)}</span>
+            <strong>${pct}%</strong>
+          </div>
+          <div class="dimension-track" aria-hidden="true">
+            <span style="width: ${pct}%"></span>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  if (!rows) {
+    return "";
+  }
+
+  return `
+    <div class="dimension-panel" aria-label="Answer quality dimensions">
+      <div class="dimension-heading">
+        <span>Quality dimensions</span>
+        <small>Weighted rubric behind answer quality</small>
+      </div>
+      <div class="dimension-grid">${rows}</div>
     </div>
   `;
 }

@@ -324,7 +324,9 @@ public class ReasoningOrchestrator {
                 log.warn("[orchestrator] Final answer promised pseudocode but did not include concrete control flow");
             }
             finalAnswer = FinalAnswerCompletenessGuard.repair(userQuery, finalAnswer);
-            finalConfidence = calibrateFinalConfidence(finalAnswer, null, finalConfidence);
+            ProductionConsistencyCalibrator.QualityScore finalQuality =
+                    calibrateFinalQuality(finalAnswer, null, finalConfidence);
+            finalConfidence = finalQuality.score();
 
             FinalResponse response = new FinalResponse(
                     traceId,
@@ -333,7 +335,11 @@ public class ReasoningOrchestrator {
                     finalDrafts.stream().map(DraftResult::provider).toList(),
                     finalFailed,
                     finalConfidence
-            ).withScoreBreakdown(finalConfidence, winnerConfidence, modelAgreement(finalJudge.rankings()));
+            ).withScoreBreakdown(
+                    finalConfidence,
+                    winnerConfidence,
+                    modelAgreement(finalJudge.rankings()),
+                    finalQuality.dimensions());
 
             long totalLatency = System.currentTimeMillis() - startTime;
             metrics.recordTotalLatency(totalLatency);
@@ -666,15 +672,16 @@ public class ReasoningOrchestrator {
                 "tps");
     }
 
-    private double calibrateFinalConfidence(String answer, String summary, double confidence) {
-        ProductionConsistencyCalibrator.Calibration calibration =
-                ProductionConsistencyCalibrator.evaluate(answer, summary);
-        double calibrated = Math.min(confidence, calibration.cap());
-        if (calibration.applied()) {
-            log.info("[orchestrator] Final confidence capped from {} to {} by production consistency calibration: {}",
-                    confidence, calibrated, calibration.reasons());
+    private ProductionConsistencyCalibrator.QualityScore calibrateFinalQuality(String answer,
+                                                                               String summary,
+                                                                               double confidence) {
+        ProductionConsistencyCalibrator.QualityScore qualityScore =
+                ProductionConsistencyCalibrator.qualityScore(answer, summary, confidence);
+        if (qualityScore.applied()) {
+            log.info("[orchestrator] Final quality calibrated from {} to {} by production rubric: dimensions={}, reasons={}",
+                    confidence, qualityScore.score(), qualityScore.dimensions(), qualityScore.reasons());
         }
-        return calibrated;
+        return qualityScore;
     }
 
     private double modelAgreement(List<JudgeRanking> rankings) {
