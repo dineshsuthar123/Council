@@ -47,13 +47,13 @@ public record FinalResponse(
 
     public FinalResponse withScoreBreakdown(double answerQuality,
                                             double winnerConfidence,
-                                            double modelAgreement) {
+                                            Double modelAgreement) {
         return withScoreBreakdown(answerQuality, winnerConfidence, modelAgreement, null);
     }
 
     public FinalResponse withScoreBreakdown(double answerQuality,
                                             double winnerConfidence,
-                                            double modelAgreement,
+                                            Double modelAgreement,
                                             Map<String, Double> dimensions) {
         return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
                 answerQuality, error, message, answerQuality, winnerConfidence, modelAgreement, dimensions);

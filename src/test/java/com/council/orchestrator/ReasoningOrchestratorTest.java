@@ -155,6 +155,8 @@ class ReasoningOrchestratorTest {
         assertTrue(response.failedProviders().contains("deepseek"));
         // Single draft → judge auto-selects without critic penalties
         assertTrue(response.judgeReason().toLowerCase().contains("only one"));
+        assertNull(response.modelAgreement(),
+                "Agreement is not meaningful when only one valid draft survived");
     }
 
     /* ── All providers fail ────────────────────────────────────────── */
@@ -213,6 +215,8 @@ class ReasoningOrchestratorTest {
         assertEquals("Claude's answer", response.finalAnswer());
         assertEquals(0.92, response.confidence(), 0.01);
         assertEquals(1, response.usedProviders().size());
+        assertNull(response.modelAgreement(),
+                "A single successful provider has no cross-model agreement measurement");
     }
 
     @Test

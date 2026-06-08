@@ -625,6 +625,10 @@ a {
   line-height: 1.1;
 }
 
+.score-card.is-muted strong {
+  color: var(--muted);
+}
+
 .score-card small {
   color: var(--subtle);
   font-size: 0.78rem;

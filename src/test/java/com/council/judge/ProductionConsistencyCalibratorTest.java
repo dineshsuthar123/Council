@@ -88,6 +88,35 @@ class ProductionConsistencyCalibratorTest {
         assertDimensionAtLeast(quality.dimensions(), "correct_endpoint_decision", 0.90);
     }
 
+    @Test
+    @DisplayName("Cached redirect before tombstone is penalized in pseudocode")
+    void cachedRedirectBeforeTombstoneIsPenalizedInPseudocode() {
+        ProductionConsistencyCalibrator.QualityScore quality =
+                ProductionConsistencyCalibrator.qualityScore("""
+                        Return 404 Not Found or 410 Gone because the URL was deleted 1 second ago.
+                        Write deleted_at/version/tombstone to the primary database and a Redis DELETED
+                        negative-cache tombstone. Do not trust a PostgreSQL replica during the 2 second lag
+                        window; use primary reads or a delete version check. Use singleflight/request coalescing
+                        for stampede control. Kafka analytics lag and dashboards are not redirect truth.
+                        Monitor Redis p99 latency, replica lag, Kafka consumer lag, tombstone hits, primary
+                        fallback rate, lock wait, dashboard freshness, and stale-cache prevention. The tradeoff
+                        is correctness over stale availability for deleted aliases, while analytics remains
+                        eventually consistent. A weaker system would trust TTLs, replicas, stale leases, and analytics.
+                        Pseudocode:
+                        cachedRedirect = redis.get(alias);
+                        if (cachedRedirect && !isTombstoned(redis, alias)) {
+                            return redirect(cachedRedirect.url);
+                        }
+                        if (redis.get(alias) == DELETED) return 404;
+                        return singleflight(alias, () -> primaryDb.findByAlias(alias));
+                        """, null, 0.95);
+
+        assertTrue(quality.dimensions().get("pseudocode") <= 0.75,
+                "Tombstone must have precedence over active cached redirects");
+        assertTrue(quality.score() < 0.86,
+                "The overall answer can remain strong, but unsafe precedence should keep it below elite");
+    }
+
     private void assertDimensionAtLeast(Map<String, Double> dimensions, String key, double min) {
         assertTrue(dimensions.containsKey(key), "Missing dimension " + key);
         assertTrue(dimensions.get(key) >= min, key + " should be at least " + min);

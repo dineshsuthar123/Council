@@ -684,9 +684,9 @@ public class ReasoningOrchestrator {
         return qualityScore;
     }
 
-    private double modelAgreement(List<JudgeRanking> rankings) {
+    private Double modelAgreement(List<JudgeRanking> rankings) {
         if (rankings == null || rankings.size() <= 1) {
-            return 1.0;
+            return null;
         }
         double max = rankings.stream().mapToDouble(JudgeRanking::score).max().orElse(0.0);
         double min = rankings.stream().mapToDouble(JudgeRanking::score).min().orElse(0.0);
