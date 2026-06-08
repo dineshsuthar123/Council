@@ -42,6 +42,10 @@ public record TraceDebugResponse(
 
         /* ── final output ─────────────────────────────────────────── */
         String finalAnswer,
-        Double finalConfidence
+        Double finalConfidence,
+        Double answerQuality,
+        Double winnerConfidence,
+        Double modelAgreement,
+        @JsonRawValue String dimensions
 ) {}
 

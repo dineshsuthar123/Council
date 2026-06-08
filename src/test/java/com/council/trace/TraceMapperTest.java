@@ -39,7 +39,9 @@ class TraceMapperTest {
         JudgeResult judge = new JudgeResult("gemini", "gemini-2.5-pro", 0.85,
                 "Winner by default", List.of(new JudgeRanking("gemini", 0.85)));
         FinalResponse response = new FinalResponse("trace-1", "answer",
-                "Winner by default", List.of("gemini"), List.of("deepseek"), 0.9);
+                "Winner by default", List.of("gemini"), List.of("deepseek"), 0.9)
+                .withScoreBreakdown(0.84, 0.55, 0.95,
+                        Map.of("pseudocode", 0.42, "deletion_safety", 0.90));
 
         mapper.populateEntity(entity, drafts, critic, judge, response, 1500);
 
@@ -48,7 +50,11 @@ class TraceMapperTest {
         assertNotNull(entity.getCriticResult());
         assertNotNull(entity.getJudgeResult());
         assertEquals("answer", entity.getFinalAnswer());
-        assertEquals(0.9, entity.getFinalConfidence());
+        assertEquals(0.84, entity.getFinalConfidence());
+        assertEquals(0.84, entity.getAnswerQuality());
+        assertEquals(0.55, entity.getWinnerConfidence());
+        assertEquals(0.95, entity.getModelAgreement());
+        assertTrue(entity.getScoreDimensions().contains("\"pseudocode\":0.42"));
         assertEquals("Winner by default", entity.getJudgeReason());
         assertEquals("gemini", entity.getUsedProviders());
         assertEquals("deepseek", entity.getFailedProviders());
@@ -72,6 +78,10 @@ class TraceMapperTest {
         entity.setFailedProviders("");
         entity.setFinalAnswer("answer");
         entity.setFinalConfidence(0.8);
+        entity.setAnswerQuality(0.76);
+        entity.setWinnerConfidence(0.55);
+        entity.setModelAgreement(0.95);
+        entity.setScoreDimensions("{\"pseudocode\":0.42}");
         entity.setTotalLatencyMs(1000L);
 
         var resp = mapper.toResponse(entity);
@@ -79,6 +89,10 @@ class TraceMapperTest {
         assertEquals("query", resp.userQuery());
         assertEquals("answer", resp.finalAnswer());
         assertEquals(0.8, resp.finalConfidence());
+        assertEquals(0.76, resp.answerQuality());
+        assertEquals(0.55, resp.winnerConfidence());
+        assertEquals(0.95, resp.modelAgreement());
+        assertEquals("{\"pseudocode\":0.42}", resp.dimensions());
         assertEquals(List.of("gemini", "deepseek"), resp.usedProviders());
         assertTrue(resp.failedProviders().isEmpty());
     }
@@ -104,6 +118,10 @@ class TraceMapperTest {
         entity.setFailedProviders("claude");
         entity.setFinalAnswer("best answer");
         entity.setFinalConfidence(0.92);
+        entity.setAnswerQuality(0.84);
+        entity.setWinnerConfidence(0.55);
+        entity.setModelAgreement(0.95);
+        entity.setScoreDimensions("{\"pseudocode\":0.42,\"deletion_safety\":0.9}");
         entity.setJudgeReason("Gemini had the highest composite score");
         entity.setTotalLatencyMs(2500L);
         entity.setDraftResults("{\"drafts\":[]}");
@@ -129,6 +147,10 @@ class TraceMapperTest {
         assertEquals("Gemini had the highest composite score", debug.judgeReason());
         assertEquals("best answer", debug.finalAnswer());
         assertEquals(0.92, debug.finalConfidence());
+        assertEquals(0.84, debug.answerQuality());
+        assertEquals(0.55, debug.winnerConfidence());
+        assertEquals(0.95, debug.modelAgreement());
+        assertEquals("{\"pseudocode\":0.42,\"deletion_safety\":0.9}", debug.dimensions());
     }
 
     @Test

@@ -42,6 +42,18 @@ public class TraceEntity {
     @Column(name = "final_confidence")
     private Double finalConfidence;
 
+    @Column(name = "answer_quality")
+    private Double answerQuality;
+
+    @Column(name = "winner_confidence")
+    private Double winnerConfidence;
+
+    @Column(name = "model_agreement")
+    private Double modelAgreement;
+
+    @Column(name = "score_dimensions", columnDefinition = "TEXT")
+    private String scoreDimensions;
+
     @Column(name = "judge_reason", columnDefinition = "TEXT")
     private String judgeReason;
 
@@ -92,6 +104,14 @@ public class TraceEntity {
     public void setFinalAnswer(String finalAnswer) { this.finalAnswer = finalAnswer; }
     public Double getFinalConfidence() { return finalConfidence; }
     public void setFinalConfidence(Double finalConfidence) { this.finalConfidence = finalConfidence; }
+    public Double getAnswerQuality() { return answerQuality; }
+    public void setAnswerQuality(Double answerQuality) { this.answerQuality = answerQuality; }
+    public Double getWinnerConfidence() { return winnerConfidence; }
+    public void setWinnerConfidence(Double winnerConfidence) { this.winnerConfidence = winnerConfidence; }
+    public Double getModelAgreement() { return modelAgreement; }
+    public void setModelAgreement(Double modelAgreement) { this.modelAgreement = modelAgreement; }
+    public String getScoreDimensions() { return scoreDimensions; }
+    public void setScoreDimensions(String scoreDimensions) { this.scoreDimensions = scoreDimensions; }
     public String getJudgeReason() { return judgeReason; }
     public void setJudgeReason(String judgeReason) { this.judgeReason = judgeReason; }
     public String getUsedProviders() { return usedProviders; }

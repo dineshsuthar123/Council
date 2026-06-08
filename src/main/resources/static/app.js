@@ -516,7 +516,9 @@ async function loadTraceDebug(traceId) {
 function renderTraceDebug(debug) {
   const providers = listText(debug.usedProviders);
   const failed = listText(debug.failedProviders);
-  const confidence = Math.max(0, Math.min(1, Number(debug.finalConfidence || 0)));
+  const answerQuality = scoreValue(debug.answerQuality ?? debug.finalConfidence);
+  const winnerConfidence = scoreValue(debug.winnerConfidence ?? debug.finalConfidence);
+  const modelAgreement = debug.modelAgreement == null ? null : scoreValue(debug.modelAgreement);
 
   els.answer.innerHTML = `
     <div class="answer-header">
@@ -531,10 +533,16 @@ function renderTraceDebug(debug) {
           <span class="meta-pill">Failed: ${escapeHtml(failed)}</span>
         </div>
       </div>
-      <div class="confidence-ring" style="--confidence-angle: ${confidence * 360}deg">
-        <span>${Math.round(confidence * 100)}%</span>
+      <div class="confidence-ring" style="--confidence-angle: ${answerQuality * 360}deg">
+        <span>${Math.round(answerQuality * 100)}%</span>
       </div>
     </div>
+    <div class="score-grid" aria-label="Trace score breakdown">
+      ${scoreCard("Answer quality", answerQuality, "Absolute quality of the final answer.")}
+      ${scoreCard("Winner confidence", winnerConfidence, "How strongly the judge preferred the selected provider.")}
+      ${modelAgreement == null ? "" : scoreCard("Model agreement", modelAgreement, "How closely provider scores clustered.")}
+    </div>
+    ${dimensionGrid(debug.dimensions)}
     <div class="answer-body">
       <h3>Prompt</h3>
       <p>${escapeHtml(debug.userQuery || "No prompt captured.")}</p>
