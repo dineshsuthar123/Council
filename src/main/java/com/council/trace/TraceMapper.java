@@ -52,6 +52,10 @@ public class TraceMapper {
         if (response != null) {
             entity.setFinalAnswer(response.finalAnswer());
             entity.setFinalConfidence(response.confidence());
+            entity.setAnswerQuality(response.answerQuality() == null ? response.confidence() : response.answerQuality());
+            entity.setWinnerConfidence(response.winnerConfidence());
+            entity.setModelAgreement(response.modelAgreement());
+            entity.setScoreDimensions(toJson(response.dimensions()));
             entity.setJudgeReason(response.judgeReason());
             entity.setUsedProviders(String.join(",", response.usedProviders()));
             entity.setFailedProviders(String.join(",", response.failedProviders()));
@@ -74,6 +78,10 @@ public class TraceMapper {
                 e.getJudgeResult(),
                 e.getFinalAnswer(),
                 e.getFinalConfidence(),
+                e.getAnswerQuality(),
+                e.getWinnerConfidence(),
+                e.getModelAgreement(),
+                e.getScoreDimensions(),
                 e.getJudgeReason(),
                 splitProviders(e.getUsedProviders()),
                 splitProviders(e.getFailedProviders()),
@@ -107,7 +115,11 @@ public class TraceMapper {
                 e.getJudgeResult(),
                 e.getJudgeReason(),
                 e.getFinalAnswer(),
-                e.getFinalConfidence()
+                e.getFinalConfidence(),
+                e.getAnswerQuality(),
+                e.getWinnerConfidence(),
+                e.getModelAgreement(),
+                e.getScoreDimensions()
         );
     }
 
