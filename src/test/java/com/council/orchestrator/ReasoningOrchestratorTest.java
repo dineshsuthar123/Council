@@ -267,7 +267,10 @@ class ReasoningOrchestratorTest {
                 the browser. The pseudocode for the redirect path should be: IF Redis has valid redirect THEN
                 return redirect; ELSE IF Redis has tombstone THEN return 404; ELSE IF primary DB read shows active
                 THEN return redirect; ELSE return 404. The tradeoffs should prioritize redirect correctness and
-                consistency over analytics freshness and availability.
+                consistency over analytics freshness and availability. Monitor Redis p95/p99 latency, replica lag,
+                Kafka consumer lag, tombstone hits, primary fallback rate, lock wait, dashboard freshness, and
+                stale-cache prevention. A weaker system would trust Redis TTL alone, trust lagging replicas, return
+                maybe-stale lease responses, skip tombstones, skip coalescing, and confuse analytics with truth.
                 """;
         LlmAdapter nvidia = mockAdapter("nvidia", "nvidia-model",
                 DraftResult.success("nvidia", "nvidia-model", synthesizedAnswer, "summary",
@@ -290,6 +293,10 @@ class ReasoningOrchestratorTest {
         assertEquals(response.answerQuality(), response.confidence(), 0.001);
         assertNotNull(response.winnerConfidence());
         assertNotNull(response.modelAgreement());
+        assertNotNull(response.dimensions());
+        assertTrue(response.dimensions().get("pseudocode") <= 0.75,
+                "Active-cache-before-tombstone pseudocode should be visible in the dimension score");
+        assertTrue(response.dimensions().get("deletion_safety") >= 0.90);
         assertTrue(response.modelAgreement() >= 0.90, "Equal strong drafts should show high agreement");
     }
 
@@ -320,8 +327,10 @@ class ReasoningOrchestratorTest {
 
         assertTrue(response.finalAnswer().contains("Concrete redirect algorithm"));
         assertTrue(response.finalAnswer().contains("RedirectResult resolve"));
-        assertTrue(response.answerQuality() >= 0.82,
-                "Completeness repair should prevent a strong answer from being treated like a 55% failure");
+        assertNotNull(response.dimensions());
+        assertTrue(response.dimensions().get("pseudocode") >= 0.85);
+        assertTrue(response.answerQuality() >= 0.74,
+                "Completeness repair should prevent a mostly strong answer from being treated like a 55% failure");
     }
 
     @Test
