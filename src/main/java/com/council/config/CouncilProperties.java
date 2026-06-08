@@ -20,6 +20,7 @@ public class CouncilProperties {
     private OrchestratorConfig orchestrator = new OrchestratorConfig();
     private RoutingConfig routing = new RoutingConfig();
     private DesignAgentConfig designAgent = new DesignAgentConfig();
+    private ResearchConfig research = new ResearchConfig();
 
     public Map<String, ProviderConfig> getProviders() { return providers; }
     public void setProviders(Map<String, ProviderConfig> providers) { this.providers = providers; }
@@ -33,6 +34,8 @@ public class CouncilProperties {
     public void setRouting(RoutingConfig routing) { this.routing = routing; }
     public DesignAgentConfig getDesignAgent() { return designAgent; }
     public void setDesignAgent(DesignAgentConfig designAgent) { this.designAgent = designAgent; }
+    public ResearchConfig getResearch() { return research; }
+    public void setResearch(ResearchConfig research) { this.research = research; }
 
     public static class ProviderConfig {
         private boolean enabled = true;
@@ -128,6 +131,31 @@ public class CouncilProperties {
         public void setEscalationContradictionThreshold(double v) { this.escalationContradictionThreshold = v; }
         public Map<String, ProviderRouteConfig> getProviderRoutes() { return providerRoutes; }
         public void setProviderRoutes(Map<String, ProviderRouteConfig> providerRoutes) { this.providerRoutes = providerRoutes; }
+    }
+
+    public static class ResearchConfig {
+        private boolean enabled = true;
+        private String provider = "tavily";
+        private String apiKey = "";
+        private String baseUrl = "https://api.tavily.com/search";
+        private int timeoutSeconds = 8;
+        private int maxResults = 5;
+        private int maxSnippetChars = 700;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
+        public String getApiKey() { return apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+        public String getBaseUrl() { return baseUrl; }
+        public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+        public int getTimeoutSeconds() { return timeoutSeconds; }
+        public void setTimeoutSeconds(int timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
+        public int getMaxResults() { return maxResults; }
+        public void setMaxResults(int maxResults) { this.maxResults = maxResults; }
+        public int getMaxSnippetChars() { return maxSnippetChars; }
+        public void setMaxSnippetChars(int maxSnippetChars) { this.maxSnippetChars = maxSnippetChars; }
     }
 
     /**

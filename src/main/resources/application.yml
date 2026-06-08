@@ -189,6 +189,15 @@ council:
     synthesis-timeout-seconds: 60
 
   # ── Intelligent Routing ──
+  research:
+    enabled: true
+    provider: tavily
+    api-key: ${TAVILY_API_KEY:}
+    base-url: https://api.tavily.com/search
+    timeout-seconds: 8
+    max-results: 5
+    max-snippet-chars: 700
+
   routing:
     enabled: true
     max-draft-providers: 3

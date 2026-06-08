@@ -1,5 +1,6 @@
 package com.council.api.dto;
 
+import com.council.research.ResearchPack;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.util.List;
@@ -21,7 +22,8 @@ public record FinalResponse(
         Double answerQuality,
         Double winnerConfidence,
         Double modelAgreement,
-        Map<String, Double> dimensions
+        Map<String, Double> dimensions,
+        ResearchPack research
 ) {
     public FinalResponse(String traceId,
                          String finalAnswer,
@@ -30,7 +32,7 @@ public record FinalResponse(
                          List<String> failedProviders,
                          double confidence) {
         this(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
-                confidence, null, null, confidence, confidence, null, null);
+                confidence, null, null, confidence, confidence, null, null, null);
     }
 
     public FinalResponse(String traceId,
@@ -42,7 +44,7 @@ public record FinalResponse(
                          String error,
                          String message) {
         this(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
-                confidence, error, message, confidence, confidence, null, null);
+                confidence, error, message, confidence, confidence, null, null, null);
     }
 
     public FinalResponse withScoreBreakdown(double answerQuality,
@@ -56,7 +58,12 @@ public record FinalResponse(
                                             Double modelAgreement,
                                             Map<String, Double> dimensions) {
         return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
-                answerQuality, error, message, answerQuality, winnerConfidence, modelAgreement, dimensions);
+                answerQuality, error, message, answerQuality, winnerConfidence, modelAgreement, dimensions, research);
+    }
+
+    public FinalResponse withResearch(ResearchPack research) {
+        return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
+                confidence, error, message, answerQuality, winnerConfidence, modelAgreement, dimensions, research);
     }
 }
 
