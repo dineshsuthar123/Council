@@ -6,6 +6,8 @@ import com.council.model.CriticResult;
 import com.council.model.DraftResult;
 import com.council.model.JudgeRanking;
 import com.council.model.JudgeResult;
+import com.council.research.ResearchPack;
+import com.council.research.ResearchSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -41,7 +43,12 @@ class TraceMapperTest {
         FinalResponse response = new FinalResponse("trace-1", "answer",
                 "Winner by default", List.of("gemini"), List.of("deepseek"), 0.9)
                 .withScoreBreakdown(0.84, 0.55, 0.95,
-                        Map.of("pseudocode", 0.42, "deletion_safety", 0.90));
+                        Map.of("pseudocode", 0.42, "deletion_safety", 0.90))
+                .withResearch(ResearchPack.withSources(
+                        "Prompt asks for current information.",
+                        List.of("latest routing"),
+                        List.of(new ResearchSource("S1", "Routing source", "https://example.com",
+                                "example.com", "snippet", "2026-01-01", 0.9))));
 
         mapper.populateEntity(entity, drafts, critic, judge, response, 1500);
 
@@ -55,6 +62,7 @@ class TraceMapperTest {
         assertEquals(0.55, entity.getWinnerConfidence());
         assertEquals(0.95, entity.getModelAgreement());
         assertTrue(entity.getScoreDimensions().contains("\"pseudocode\":0.42"));
+        assertTrue(entity.getResearchContext().contains("\"id\":\"S1\""));
         assertEquals("Winner by default", entity.getJudgeReason());
         assertEquals("gemini", entity.getUsedProviders());
         assertEquals("deepseek", entity.getFailedProviders());
@@ -82,6 +90,7 @@ class TraceMapperTest {
         entity.setWinnerConfidence(0.55);
         entity.setModelAgreement(0.95);
         entity.setScoreDimensions("{\"pseudocode\":0.42}");
+        entity.setResearchContext("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}");
         entity.setTotalLatencyMs(1000L);
 
         var resp = mapper.toResponse(entity);
@@ -93,6 +102,7 @@ class TraceMapperTest {
         assertEquals(0.55, resp.winnerConfidence());
         assertEquals(0.95, resp.modelAgreement());
         assertEquals("{\"pseudocode\":0.42}", resp.dimensions());
+        assertEquals("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}", resp.researchContext());
         assertEquals(List.of("gemini", "deepseek"), resp.usedProviders());
         assertTrue(resp.failedProviders().isEmpty());
     }
@@ -122,6 +132,7 @@ class TraceMapperTest {
         entity.setWinnerConfidence(0.55);
         entity.setModelAgreement(0.95);
         entity.setScoreDimensions("{\"pseudocode\":0.42,\"deletion_safety\":0.9}");
+        entity.setResearchContext("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}");
         entity.setJudgeReason("Gemini had the highest composite score");
         entity.setTotalLatencyMs(2500L);
         entity.setDraftResults("{\"drafts\":[]}");
@@ -151,6 +162,7 @@ class TraceMapperTest {
         assertEquals(0.55, debug.winnerConfidence());
         assertEquals(0.95, debug.modelAgreement());
         assertEquals("{\"pseudocode\":0.42,\"deletion_safety\":0.9}", debug.dimensions());
+        assertEquals("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}", debug.researchContext());
     }
 
     @Test

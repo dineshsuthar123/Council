@@ -13,6 +13,9 @@ import com.council.model.*;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
 import com.council.provider.routing.*;
+import com.council.research.ResearchPack;
+import com.council.research.ResearchPromptAugmenter;
+import com.council.research.ResearchService;
 import com.council.synthesizer.SynthesizerEngine;
 import com.council.trace.TraceService;
 import com.council.verifier.VerifierEngine;
@@ -36,13 +39,14 @@ class ReasoningOrchestratorRoutingTest {
 
     private ProviderRegistry registry;
     private CriticEngine criticEngine;
-        private VerifierEngine verifierEngine;
-        private SynthesizerEngine synthesizerEngine;
+    private VerifierEngine verifierEngine;
+    private SynthesizerEngine synthesizerEngine;
     private TraceService traceService;
     private OrchestrationMetrics metrics;
     private ProviderSelectionStrategy selectionStrategy;
     private ProviderConcurrencyLimiter concurrencyLimiter;
     private PipelineEventBroadcaster eventBroadcaster;
+    private ResearchService researchService;
     private ReasoningOrchestrator orchestrator;
 
     @BeforeEach
@@ -54,6 +58,7 @@ class ReasoningOrchestratorRoutingTest {
         traceService = mock(TraceService.class);
         selectionStrategy = mock(ProviderSelectionStrategy.class);
         eventBroadcaster = mock(PipelineEventBroadcaster.class);
+        researchService = mock(ResearchService.class);
         concurrencyLimiter = new ProviderConcurrencyLimiter();
         metrics = new OrchestrationMetrics(new SimpleMeterRegistry());
 
@@ -80,11 +85,13 @@ class ReasoningOrchestratorRoutingTest {
                 .thenReturn(VerifierBatchResult.success(Map.of()));
         when(synthesizerEngine.synthesize(any()))
                 .thenReturn(SynthesisResult.failure("none", "none", "synthesis unavailable", 0));
+        when(researchService.buildEvidencePack(anyString(), any()))
+                .thenReturn(ResearchPack.notRequired());
 
         DeterministicJudge judge = new DeterministicJudge(props, new SpecificityScorer());
         orchestrator = new ReasoningOrchestrator(registry, criticEngine, verifierEngine, synthesizerEngine, judge,
                 new PromptClassifier(), traceService, metrics, props, selectionStrategy, concurrencyLimiter,
-                eventBroadcaster);
+                eventBroadcaster, researchService, new ResearchPromptAugmenter());
     }
 
     private LlmAdapter mockAdapter(String name, String model, DraftResult result) {

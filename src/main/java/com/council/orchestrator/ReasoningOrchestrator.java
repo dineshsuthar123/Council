@@ -2,12 +2,14 @@ package com.council.orchestrator;
 
 import com.council.api.dto.FinalResponse;
 import com.council.common.CouncilConstants;
+import com.council.common.CouncilUtils;
 import com.council.config.CouncilProperties;
 import com.council.critic.CriticEngine;
 import com.council.events.PipelineEventBroadcaster;
 import com.council.judge.DeterministicJudge;
 import com.council.judge.PromptClassifier;
 import com.council.judge.ProductionConsistencyCalibrator;
+import com.council.judge.ResearchQualityCalibrator;
 import com.council.judge.TaskType;
 import com.council.metrics.OrchestrationMetrics;
 import com.council.model.*;
@@ -16,6 +18,9 @@ import com.council.provider.ProviderRegistry;
 import com.council.provider.routing.ProviderConcurrencyLimiter;
 import com.council.provider.routing.ProviderDescriptor;
 import com.council.provider.routing.ProviderSelectionStrategy;
+import com.council.research.ResearchPack;
+import com.council.research.ResearchPromptAugmenter;
+import com.council.research.ResearchService;
 import com.council.synthesizer.SynthesizerEngine;
 import com.council.trace.TraceService;
 import com.council.verifier.VerifierEngine;
@@ -58,6 +63,8 @@ public class ReasoningOrchestrator {
     private final ProviderSelectionStrategy selectionStrategy;
     private final ProviderConcurrencyLimiter concurrencyLimiter;
     private final PipelineEventBroadcaster eventBroadcaster;
+    private final ResearchService researchService;
+    private final ResearchPromptAugmenter researchPromptAugmenter;
     private final long draftTimeoutSeconds;
     private final long criticTimeoutSeconds;
     private final long verifierTimeoutSeconds;
@@ -74,7 +81,9 @@ public class ReasoningOrchestrator {
                                   CouncilProperties properties,
                                   ProviderSelectionStrategy selectionStrategy,
                                   ProviderConcurrencyLimiter concurrencyLimiter,
-                                  PipelineEventBroadcaster eventBroadcaster) {
+                                  PipelineEventBroadcaster eventBroadcaster,
+                                  ResearchService researchService,
+                                  ResearchPromptAugmenter researchPromptAugmenter) {
         this.registry = registry;
         this.criticEngine = criticEngine;
         this.verifierEngine = verifierEngine;
@@ -86,6 +95,8 @@ public class ReasoningOrchestrator {
         this.selectionStrategy = selectionStrategy;
         this.concurrencyLimiter = concurrencyLimiter;
         this.eventBroadcaster = eventBroadcaster;
+        this.researchService = researchService;
+        this.researchPromptAugmenter = researchPromptAugmenter;
         CouncilProperties.OrchestratorConfig orchestratorConfig = properties.getOrchestrator();
         this.draftTimeoutSeconds = positiveOrDefault(
                 orchestratorConfig.getDraftTimeoutSeconds(), DEFAULT_DRAFT_TIMEOUT_SECONDS);
@@ -116,6 +127,8 @@ public class ReasoningOrchestrator {
         long startTime = System.currentTimeMillis();
         MDC.put(CouncilConstants.MDC_TRACE_ID, traceId);
         metrics.recordRequest();
+        ResearchPack researchPack = ResearchPack.notRequired();
+        List<DraftResult> traceDraftsForFailure = List.of();
 
         log.info("[orchestrator] Starting reasoning pipeline, traceId={}", traceId);
         emit(traceId, "START", "running", "Reasoning pipeline started", startTime,
@@ -128,11 +141,33 @@ public class ReasoningOrchestrator {
             emit(traceId, "CLASSIFY", "done", "Prompt classified as " + taskType, startTime,
                     Map.of("taskType", taskType.name()));
 
+            researchPack = researchService == null
+                    ? ResearchPack.notRequired()
+                    : researchService.buildEvidencePack(userQuery, taskType);
+            if (researchPack == null) {
+                researchPack = ResearchPack.notRequired();
+            }
+            String modelQuery = researchPromptAugmenter == null
+                    ? userQuery
+                    : researchPromptAugmenter.augment(userQuery, researchPack);
+            if (researchPack.required()) {
+                emit(traceId, "CLASSIFY", researchPack.hasSources() ? "done" : "degraded",
+                        researchPack.hasSources()
+                                ? "Research evidence pack built"
+                                : "Research required but evidence unavailable",
+                        startTime,
+                        Map.of("researchRequired", true,
+                                "sourceCount", researchPack.sources().size(),
+                                "queries", researchPack.queries()));
+            }
+
             // 1. Select providers (routing-aware or legacy), with task type
             List<LlmAdapter> providers = selectDraftProviders(traceId, taskType);
             if (providers.isEmpty()) {
                 log.warn("[orchestrator] No providers available");
-                FinalResponse response = errorResponse(traceId, "No LLM providers are currently available");
+                FinalResponse response = withResearch(
+                        errorResponse(traceId, "No LLM providers are currently available"), researchPack);
+                persistTrace(traceId, userQuery, List.of(), null, null, response, startTime);
                 emitFailure(traceId, "ERROR", response.judgeReason(), startTime, response);
                 return response;
             }
@@ -145,9 +180,10 @@ public class ReasoningOrchestrator {
             // 2. Draft phase
             emit(traceId, "DRAFT", "running", "Draft phase started", startTime,
                     Map.of("providerCount", providers.size()));
-            DraftRequest draftRequest = DraftRequest.of(traceId, userQuery);
+            DraftRequest draftRequest = DraftRequest.of(traceId, modelQuery);
             List<DraftResult> allDrafts = runDraftPhase(providers, draftRequest);
             List<DraftResult> traceDrafts = new ArrayList<>(allDrafts);
+            traceDraftsForFailure = traceDrafts;
 
             List<DraftResult> successfulDrafts = allDrafts.stream()
                     .filter(DraftResult::isSuccess).toList();
@@ -165,8 +201,8 @@ public class ReasoningOrchestrator {
             if (successfulDrafts.isEmpty()) {
                 String msg = "All providers failed: " + failedProviders;
                 log.error("[orchestrator] {}", msg);
-                persistTrace(traceId, userQuery, allDrafts, null, null, null, startTime);
-                FinalResponse response = errorResponse(traceId, msg, failedProviders);
+                FinalResponse response = withResearch(errorResponse(traceId, msg, failedProviders), researchPack);
+                persistTrace(traceId, userQuery, allDrafts, null, null, response, startTime);
                 emitFailure(traceId, "ERROR", msg, startTime, response);
                 return response;
             }
@@ -174,7 +210,7 @@ public class ReasoningOrchestrator {
             // 3. Review phases (Critic + Verifier in parallel)
             emit(traceId, "REVIEW", "running", "Critic and verifier phases started", startTime,
                     Map.of("drafts", successfulDrafts.size()));
-            ReviewPhaseResult review = runReviewPhases(traceId, userQuery, successfulDrafts);
+            ReviewPhaseResult review = runReviewPhases(traceId, modelQuery, successfulDrafts);
             CriticResult criticResult = review.criticResult();
             VerifierBatchResult verifierBatchResult = review.verifierBatchResult();
             boolean enforceConstraintVerifier = shouldEnforceConstraintVerifier(userQuery, taskType);
@@ -196,7 +232,8 @@ public class ReasoningOrchestrator {
 
             if (constraintValidDrafts.isEmpty()) {
                 log.warn("[orchestrator] No valid drafts after verifier/constraint filtering");
-                FinalResponse failure = constraintFailureResponse(traceId, failedAndRejected);
+                FinalResponse failure = withResearch(
+                        constraintFailureResponse(traceId, failedAndRejected), researchPack);
                 persistTrace(traceId, userQuery, allDrafts, criticResult, null, failure, startTime);
                 emitFailure(traceId, "ERROR", failure.message(), startTime, failure);
                 return failure;
@@ -252,7 +289,7 @@ public class ReasoningOrchestrator {
                         List<DraftResult> combined = new ArrayList<>(constraintValidDrafts);
                         combined.addAll(successfulEscalation);
 
-                        ReviewPhaseResult escalatedReview = runReviewPhases(traceId, userQuery, combined);
+                        ReviewPhaseResult escalatedReview = runReviewPhases(traceId, modelQuery, combined);
                         finalCritic = escalatedReview.criticResult();
                         VerifierBatchResult effectiveEscalatedVerifier = enforceConstraintVerifier
                                 ? escalatedReview.verifierBatchResult()
@@ -265,7 +302,8 @@ public class ReasoningOrchestrator {
 
                         if (filteredEscalated.validDrafts().isEmpty()) {
                             log.warn("[orchestrator] No valid drafts after escalation verifier/constraint filtering");
-                            FinalResponse failure = constraintFailureResponse(traceId, finalFailed);
+                            FinalResponse failure = withResearch(
+                                    constraintFailureResponse(traceId, finalFailed), researchPack);
                             persistTrace(traceId, userQuery, traceDrafts, finalCritic, null, failure, startTime);
                             emitFailure(traceId, "ERROR", failure.message(), startTime, failure);
                             return failure;
@@ -289,7 +327,7 @@ public class ReasoningOrchestrator {
 
             SynthesisResult synthesisResult = runSynthesisPhase(new SynthesisRequest(
                     traceId,
-                    userQuery,
+                    modelQuery,
                     finalDrafts,
                     finalVerifier,
                     finalCritic
@@ -324,8 +362,8 @@ public class ReasoningOrchestrator {
                 log.warn("[orchestrator] Final answer promised pseudocode but did not include concrete control flow");
             }
             finalAnswer = FinalAnswerCompletenessGuard.repair(userQuery, finalAnswer);
-            ProductionConsistencyCalibrator.QualityScore finalQuality =
-                    calibrateFinalQuality(finalAnswer, null, finalConfidence);
+            CalibratedFinalQuality finalQuality =
+                    calibrateFinalQuality(finalAnswer, null, finalConfidence, researchPack);
             finalConfidence = finalQuality.score();
 
             FinalResponse response = new FinalResponse(
@@ -339,7 +377,8 @@ public class ReasoningOrchestrator {
                     finalConfidence,
                     winnerConfidence,
                     modelAgreement(finalJudge.rankings()),
-                    finalQuality.dimensions());
+                    finalQuality.dimensions())
+                    .withResearch(researchPack);
 
             long totalLatency = System.currentTimeMillis() - startTime;
             metrics.recordTotalLatency(totalLatency);
@@ -361,7 +400,13 @@ public class ReasoningOrchestrator {
         } catch (Exception e) {
             long totalLatency = System.currentTimeMillis() - startTime;
             log.error("[orchestrator] Unexpected error after {}ms: {}", totalLatency, e.getMessage(), e);
-            FinalResponse response = errorResponse(traceId, "Internal orchestration error: " + e.getMessage());
+            FinalResponse response = withResearch(
+                    errorResponse(traceId, "Internal orchestration error: " + e.getMessage()), researchPack);
+            try {
+                persistTrace(traceId, userQuery, traceDraftsForFailure, null, null, response, startTime);
+            } catch (Exception persistError) {
+                log.warn("[orchestrator] Failed to persist internal-error trace: {}", persistError.getMessage());
+            }
             emitFailure(traceId, "ERROR", response.judgeReason(), startTime, response);
             return response;
         } finally {
@@ -672,16 +717,29 @@ public class ReasoningOrchestrator {
                 "tps");
     }
 
-    private ProductionConsistencyCalibrator.QualityScore calibrateFinalQuality(String answer,
-                                                                               String summary,
-                                                                               double confidence) {
-        ProductionConsistencyCalibrator.QualityScore qualityScore =
+    private CalibratedFinalQuality calibrateFinalQuality(String answer,
+                                                         String summary,
+                                                         double confidence,
+                                                         ResearchPack researchPack) {
+        ProductionConsistencyCalibrator.QualityScore productionScore =
                 ProductionConsistencyCalibrator.qualityScore(answer, summary, confidence);
-        if (qualityScore.applied()) {
-            log.info("[orchestrator] Final quality calibrated from {} to {} by production rubric: dimensions={}, reasons={}",
-                    confidence, qualityScore.score(), qualityScore.dimensions(), qualityScore.reasons());
+        double score = productionScore.score();
+        Map<String, Double> dimensions = new LinkedHashMap<>(productionScore.dimensions());
+        List<String> reasons = new ArrayList<>(productionScore.reasons());
+
+        ResearchQualityCalibrator.QualityScore researchScore =
+                ResearchQualityCalibrator.qualityScore(answer, researchPack, score);
+        if (researchScore.applied()) {
+            dimensions.putAll(researchScore.dimensions());
+            reasons.addAll(researchScore.reasons());
+            score = Math.min(score, researchScore.score());
         }
-        return qualityScore;
+
+        if (productionScore.applied() || researchScore.applied()) {
+            log.info("[orchestrator] Final quality calibrated from {} to {} by quality rubrics: dimensions={}, reasons={}",
+                    confidence, score, dimensions, reasons);
+        }
+        return new CalibratedFinalQuality(CouncilUtils.clamp01(score), Map.copyOf(dimensions), List.copyOf(reasons));
     }
 
     private Double modelAgreement(List<JudgeRanking> rankings) {
@@ -714,6 +772,10 @@ public class ReasoningOrchestrator {
 
     private record ReviewPhaseResult(CriticResult criticResult,
                                      VerifierBatchResult verifierBatchResult) {}
+
+    private record CalibratedFinalQuality(double score,
+                                          Map<String, Double> dimensions,
+                                          List<String> reasons) {}
 
     private record DraftFilterResult(List<DraftResult> validDrafts,
                                      List<String> invalidProviders) {}
@@ -805,6 +867,10 @@ public class ReasoningOrchestrator {
                 "NO_VALID_DESIGN",
                 message
         );
+    }
+
+    private FinalResponse withResearch(FinalResponse response, ResearchPack researchPack) {
+        return response.withResearch(researchPack == null ? ResearchPack.notRequired() : researchPack);
     }
 }
 

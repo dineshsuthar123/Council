@@ -46,6 +46,7 @@ public record TraceDebugResponse(
         Double answerQuality,
         Double winnerConfidence,
         Double modelAgreement,
-        @JsonRawValue String dimensions
+        @JsonRawValue String dimensions,
+        @JsonRawValue String researchContext
 ) {}
 

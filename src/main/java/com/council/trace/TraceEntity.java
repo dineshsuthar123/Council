@@ -54,6 +54,9 @@ public class TraceEntity {
     @Column(name = "score_dimensions", columnDefinition = "TEXT")
     private String scoreDimensions;
 
+    @Column(name = "research_context", columnDefinition = "TEXT")
+    private String researchContext;
+
     @Column(name = "judge_reason", columnDefinition = "TEXT")
     private String judgeReason;
 
@@ -112,6 +115,8 @@ public class TraceEntity {
     public void setModelAgreement(Double modelAgreement) { this.modelAgreement = modelAgreement; }
     public String getScoreDimensions() { return scoreDimensions; }
     public void setScoreDimensions(String scoreDimensions) { this.scoreDimensions = scoreDimensions; }
+    public String getResearchContext() { return researchContext; }
+    public void setResearchContext(String researchContext) { this.researchContext = researchContext; }
     public String getJudgeReason() { return judgeReason; }
     public void setJudgeReason(String judgeReason) { this.judgeReason = judgeReason; }
     public String getUsedProviders() { return usedProviders; }

@@ -13,6 +13,10 @@ import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
 import com.council.provider.routing.ProviderConcurrencyLimiter;
 import com.council.provider.routing.ProviderSelectionStrategy;
+import com.council.research.ResearchPack;
+import com.council.research.ResearchPromptAugmenter;
+import com.council.research.ResearchService;
+import com.council.research.ResearchSource;
 import com.council.synthesizer.SynthesizerEngine;
 import com.council.trace.TraceService;
 import com.council.verifier.VerifierEngine;
@@ -20,6 +24,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 import java.util.Map;
@@ -35,12 +40,13 @@ class ReasoningOrchestratorTest {
 
     private ProviderRegistry registry;
     private CriticEngine criticEngine;
-        private VerifierEngine verifierEngine;
-        private SynthesizerEngine synthesizerEngine;
+    private VerifierEngine verifierEngine;
+    private SynthesizerEngine synthesizerEngine;
     private DeterministicJudge judge;
     private TraceService traceService;
     private OrchestrationMetrics metrics;
     private PipelineEventBroadcaster eventBroadcaster;
+    private ResearchService researchService;
     private ReasoningOrchestrator orchestrator;
 
     @BeforeEach
@@ -51,6 +57,7 @@ class ReasoningOrchestratorTest {
         synthesizerEngine = mock(SynthesizerEngine.class);
         traceService = mock(TraceService.class);
         eventBroadcaster = mock(PipelineEventBroadcaster.class);
+        researchService = mock(ResearchService.class);
         metrics = new OrchestrationMetrics(new SimpleMeterRegistry());
 
         CouncilProperties props = new CouncilProperties();
@@ -74,10 +81,12 @@ class ReasoningOrchestratorTest {
                 .thenReturn(VerifierBatchResult.success(Map.of()));
         when(synthesizerEngine.synthesize(any()))
                 .thenReturn(SynthesisResult.failure("none", "none", "synthesis unavailable", 0));
+        when(researchService.buildEvidencePack(anyString(), any()))
+                .thenReturn(ResearchPack.notRequired());
 
         orchestrator = new ReasoningOrchestrator(registry, criticEngine, verifierEngine, synthesizerEngine, judge,
                 new PromptClassifier(), traceService, metrics, props, selectionStrategy, concurrencyLimiter,
-                eventBroadcaster);
+                eventBroadcaster, researchService, new ResearchPromptAugmenter());
     }
 
     /* ── Happy path: all providers succeed ─────────────────────────── */
@@ -196,6 +205,32 @@ class ReasoningOrchestratorTest {
         assertTrue(response.judgeReason().contains("No LLM providers"));
     }
 
+    @Test
+    @DisplayName("Research context is persisted when no providers are available")
+    void researchContextPersistsWhenNoProvidersAvailable() {
+        String query = "What is the latest model routing architecture?";
+        ResearchPack pack = ResearchPack.unavailable(
+                "Prompt asks for current information.",
+                List.of("latest model routing architecture"),
+                "TAVILY_API_KEY is not configured");
+        when(researchService.buildEvidencePack(anyString(), any())).thenReturn(pack);
+        when(registry.getAvailableDraftProviders()).thenReturn(List.of());
+
+        FinalResponse response = orchestrator.reason(query);
+
+        assertNotNull(response);
+        assertNull(response.finalAnswer());
+        assertEquals(pack, response.research());
+
+        ArgumentCaptor<FinalResponse> responseCaptor = ArgumentCaptor.forClass(FinalResponse.class);
+        verify(traceService).persistAsync(anyString(), eq(query), anyList(), any(), any(),
+                responseCaptor.capture(), anyLong());
+        assertNotNull(responseCaptor.getValue().research());
+        assertTrue(responseCaptor.getValue().research().required());
+        assertEquals("TAVILY_API_KEY is not configured",
+                responseCaptor.getValue().research().errorMessage());
+    }
+
     /* ── Single provider success ───────────────────────────────────── */
 
     @Test
@@ -217,6 +252,36 @@ class ReasoningOrchestratorTest {
         assertEquals(1, response.usedProviders().size());
         assertNull(response.modelAgreement(),
                 "A single successful provider has no cross-model agreement measurement");
+    }
+
+    @Test
+    @DisplayName("Research evidence pack is supplied to draft providers")
+    void researchEvidencePackIsSuppliedToDraftProviders() {
+        ResearchPack pack = ResearchPack.withSources(
+                "Prompt asks for current information.",
+                List.of("latest model routing"),
+                List.of(new ResearchSource("S1", "Routing source", "https://example.com/routing",
+                        "example.com", "Routing selects models dynamically.", "2026-01-01", 0.9)));
+        when(researchService.buildEvidencePack(anyString(), any())).thenReturn(pack);
+
+        LlmAdapter adapter = mockAdapter("gemini", "gemini-2.5-pro",
+                DraftResult.success("gemini", "gemini-2.5-pro",
+                        "Use dynamic model routing for current provider selection [S1].",
+                        "Uses cited evidence", List.of(), List.of(), 0.90, 700, "raw"));
+
+        when(registry.getAvailableDraftProviders()).thenReturn(List.of(adapter));
+        when(criticEngine.critique(any())).thenReturn(
+                CriticResult.failure("critic", "critic-model", "Critic unavailable", 0));
+
+        FinalResponse response = orchestrator.reason("What is the latest model routing architecture?");
+
+        ArgumentCaptor<DraftRequest> captor = ArgumentCaptor.forClass(DraftRequest.class);
+        verify(adapter).generateDraft(captor.capture());
+        assertTrue(captor.getValue().userQuery().contains("SHARED EXTERNAL RESEARCH CONTEXT"));
+        assertTrue(captor.getValue().userQuery().contains("[S1] Routing source"));
+        assertNotNull(response.research());
+        assertTrue(response.research().hasSources());
+        assertTrue(response.dimensions().containsKey("citation_accuracy"));
     }
 
     @Test
@@ -494,7 +559,7 @@ class ReasoningOrchestratorTest {
         return new ReasoningOrchestrator(localRegistry, localCritic, localVerifier, localSynthesizer,
                 new DeterministicJudge(props, new SpecificityScorer()), new PromptClassifier(),
                 localTraceService, localMetrics, props, localSelectionStrategy, new ProviderConcurrencyLimiter(),
-                mock(PipelineEventBroadcaster.class));
+                mock(PipelineEventBroadcaster.class), mock(ResearchService.class), new ResearchPromptAugmenter());
     }
 }
 

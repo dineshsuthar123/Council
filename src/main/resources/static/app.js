@@ -351,6 +351,7 @@ function renderAnswer(response) {
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
     ${dimensionGrid(response.dimensions)}
+    ${researchPanel(response.research)}
     <div class="answer-body">${formatAnswer(response.finalAnswer || "No final answer returned.")}</div>
   `;
 }
@@ -545,6 +546,8 @@ function renderTraceDebug(debug) {
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
     ${dimensionGrid(debug.dimensions)}
+    ${researchPanel(debug.researchContext)}
+    ${providerOutcomePanel(debug.draftResults)}
     <div class="answer-body">
       <h3>Prompt</h3>
       <p>${escapeHtml(debug.userQuery || "No prompt captured.")}</p>
@@ -772,7 +775,14 @@ function dimensionGrid(dimensions) {
     ["observability", "Observability"],
     ["tradeoffs", "Tradeoffs"],
     ["pseudocode", "Pseudocode"],
-    ["common_mistakes", "Common mistakes"]
+    ["common_mistakes", "Common mistakes"],
+    ["source_quality", "Source quality"],
+    ["citation_accuracy", "Citation accuracy"],
+    ["recency", "Recency"],
+    ["evidence_coverage", "Evidence coverage"],
+    ["unsupported_claim_penalty", "Supported claims"],
+    ["conflict_handling", "Conflict handling"],
+    ["answer_completeness", "Completeness"]
   ];
 
   const rows = order
@@ -809,6 +819,78 @@ function dimensionGrid(dimensions) {
   `;
 }
 
+function researchPanel(pack) {
+  if (!pack || !pack.required) {
+    return "";
+  }
+
+  const sources = Array.isArray(pack.sources) ? pack.sources : [];
+  const queries = Array.isArray(pack.queries) ? pack.queries : [];
+  const statusClass = sources.length ? "up" : "degraded";
+  const statusText = sources.length ? `${sources.length} sources attached` : "Research unavailable";
+  const sourceRows = sources.map((source) => {
+    const href = safeExternalHref(source.url);
+    return `
+      <article class="source-row">
+        <div>
+          <strong>${escapeHtml(source.id || "S?")} · ${escapeHtml(source.title || source.url || "Untitled source")}</strong>
+          <p>${escapeHtml(source.snippet || "No snippet captured.")}</p>
+          <a href="${href}" target="_blank" rel="noreferrer">${escapeHtml(source.domain || source.url || "source")}</a>
+        </div>
+        <span>${escapeHtml(source.publishedAt || "date --")}</span>
+      </article>
+    `;
+  }).join("");
+
+  return `
+    <div class="research-panel" aria-label="Research evidence pack">
+      <div class="dimension-heading">
+        <span>Research evidence</span>
+        <small><span class="status-dot ${statusClass}"></span>${escapeHtml(statusText)}</small>
+      </div>
+      <p class="research-reason">${escapeHtml(pack.reason || "External research was requested.")}</p>
+      ${queries.length ? `<div class="query-chips">${queries.map((query) => `<span>${escapeHtml(query)}</span>`).join("")}</div>` : ""}
+      ${sources.length ? `<div class="source-list">${sourceRows}</div>` : `<div class="empty-inline">${escapeHtml(pack.errorMessage || "No source evidence was available for this run.")}</div>`}
+    </div>
+  `;
+}
+
+function providerOutcomePanel(draftResults) {
+  const drafts = Array.isArray(draftResults)
+    ? draftResults
+    : Array.isArray(draftResults?.drafts)
+      ? draftResults.drafts
+      : [];
+
+  if (!drafts.length) {
+    return "";
+  }
+
+  const rows = drafts.map((draft) => {
+    const status = String(draft.status || (draft.errorMessage ? "FAILURE" : "SUCCESS")).toUpperCase();
+    const ok = status === "SUCCESS";
+    return `
+      <div class="provider-outcome-row">
+        <div>
+          <strong><span class="status-dot ${ok ? "up" : "down"}"></span>${escapeHtml(draft.provider || "unknown")}</strong>
+          <small>${escapeHtml(draft.model || "model --")} · ${draft.latencyMs ?? "--"} ms</small>
+        </div>
+        <p>${escapeHtml(ok ? (draft.summary || "Draft succeeded.") : (draft.errorMessage || "Provider failed without a captured reason."))}</p>
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="provider-outcome-panel" aria-label="Provider outcomes">
+      <div class="dimension-heading">
+        <span>Provider outcomes</span>
+        <small>Failure reasons and latencies</small>
+      </div>
+      <div class="provider-outcome-grid">${rows}</div>
+    </div>
+  `;
+}
+
 function scoreValue(value) {
   return Math.max(0, Math.min(1, Number(value || 0)));
 }
@@ -824,6 +906,18 @@ function escapeHtml(value = "") {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function safeExternalHref(value = "") {
+  try {
+    const url = new URL(String(value));
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return escapeHtml(url.href);
+    }
+  } catch (error) {
+    return "#";
+  }
+  return "#";
 }
 
 function shortId(value = "") {
