@@ -326,6 +326,7 @@ function renderAnswer(response) {
   const winnerConfidence = scoreValue(response.winnerConfidence ?? response.confidence);
   const modelAgreement = response.modelAgreement == null ? null : scoreValue(response.modelAgreement);
   const confidencePct = Math.round(answerQuality * 100);
+  const validDraftCount = Array.isArray(response.usedProviders) ? response.usedProviders.length : 0;
   const providers = listText(response.usedProviders);
   const failed = listText(response.failedProviders);
 
@@ -346,8 +347,8 @@ function renderAnswer(response) {
     </div>
     <div class="score-grid" aria-label="Council scoring breakdown">
       ${scoreCard("Answer quality", answerQuality, "Absolute quality of the final answer.")}
-      ${scoreCard("Winner confidence", winnerConfidence, "How strongly the judge preferred the selected provider.")}
-      ${modelAgreement == null ? "" : scoreCard("Model agreement", modelAgreement, "How closely provider scores clustered.")}
+      ${scoreCard("Winner confidence", winnerConfidence, winnerConfidenceHelper(validDraftCount))}
+      ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
     ${dimensionGrid(response.dimensions)}
     <div class="answer-body">${formatAnswer(response.finalAnswer || "No final answer returned.")}</div>
@@ -519,6 +520,7 @@ function renderTraceDebug(debug) {
   const answerQuality = scoreValue(debug.answerQuality ?? debug.finalConfidence);
   const winnerConfidence = scoreValue(debug.winnerConfidence ?? debug.finalConfidence);
   const modelAgreement = debug.modelAgreement == null ? null : scoreValue(debug.modelAgreement);
+  const validDraftCount = Number(debug.successfulDrafts ?? (Array.isArray(debug.usedProviders) ? debug.usedProviders.length : 0));
 
   els.answer.innerHTML = `
     <div class="answer-header">
@@ -539,8 +541,8 @@ function renderTraceDebug(debug) {
     </div>
     <div class="score-grid" aria-label="Trace score breakdown">
       ${scoreCard("Answer quality", answerQuality, "Absolute quality of the final answer.")}
-      ${scoreCard("Winner confidence", winnerConfidence, "How strongly the judge preferred the selected provider.")}
-      ${modelAgreement == null ? "" : scoreCard("Model agreement", modelAgreement, "How closely provider scores clustered.")}
+      ${scoreCard("Winner confidence", winnerConfidence, winnerConfidenceHelper(validDraftCount))}
+      ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
     ${dimensionGrid(debug.dimensions)}
     <div class="answer-body">
@@ -728,6 +730,33 @@ function scoreCard(label, value, helper) {
       <small>${escapeHtml(helper)}</small>
     </div>
   `;
+}
+
+function scoreCardText(label, value, helper) {
+  return `
+    <div class="score-card is-muted">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(helper)}</small>
+    </div>
+  `;
+}
+
+function agreementScoreCard(modelAgreement, validDraftCount) {
+  if (modelAgreement == null) {
+    const helper = validDraftCount <= 1
+      ? "Only one valid draft was available, so cross-model agreement was not measured."
+      : "Agreement was not recorded for this trace.";
+    return scoreCardText("Model agreement", "N/A", helper);
+  }
+  return scoreCard("Model agreement", modelAgreement, "How closely valid provider scores clustered.");
+}
+
+function winnerConfidenceHelper(validDraftCount) {
+  if (validDraftCount <= 1) {
+    return "Only one valid draft was available; this is selection certainty, not a head-to-head win.";
+  }
+  return "How strongly the judge preferred the selected provider.";
 }
 
 function dimensionGrid(dimensions) {

@@ -130,7 +130,7 @@ public final class ProductionConsistencyCalibrator {
             reasons.add("pseudocode is a prose checklist");
         }
         if (activeCachePrecedesTombstoneInPseudocode(text)) {
-            cap = Math.min(cap, 0.86);
+            cap = Math.min(cap, 0.85);
             reasons.add("pseudocode checks active cache before deleted tombstone");
         }
         if (hasShallowTradeoffStatement(text)) {
@@ -196,7 +196,7 @@ public final class ProductionConsistencyCalibrator {
             cap = Math.min(cap, 0.70);
         }
         if (activeCachePrecedesTombstoneInPseudocode(text)) {
-            cap = Math.min(cap, 0.86);
+            cap = Math.min(cap, 0.85);
         }
         return cap;
     }
@@ -423,13 +423,15 @@ public final class ProductionConsistencyCalibrator {
     }
 
     private static boolean activeCachePrecedesTombstoneInPseudocode(String text) {
-        int pseudocode = text.indexOf("pseudocode");
-        if (pseudocode < 0) {
+        int algorithmStart = firstIndexOf(text, "pseudocode", "algorithm", "resolve(");
+        if (algorithmStart < 0) {
             return false;
         }
-        String snippet = text.substring(pseudocode);
-        int tombstone = firstIndexOf(snippet, "tombstone", "deleted");
-        int active = firstIndexOf(snippet, "valid redirect", "cache hit", "active");
+        String snippet = text.substring(algorithmStart);
+        int tombstone = firstIndexOf(snippet, "tombstone", "istombstoned", "is tombstoned",
+                "deleted", "negative-cache", "negative cache");
+        int active = firstIndexOf(snippet, "cachedredirect", "cached redirect", "valid redirect",
+                "cache hit", "active redirect", "cached == active", "cached active", "return cached");
         return active >= 0 && tombstone >= 0 && active < tombstone;
     }
 
