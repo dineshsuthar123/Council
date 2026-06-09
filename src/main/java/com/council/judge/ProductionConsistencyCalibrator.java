@@ -34,6 +34,10 @@ public final class ProductionConsistencyCalibrator {
 
     public static QualityScore qualityScore(String answer, String summary, double fallbackConfidence) {
         String text = normalize(answer + " " + summary);
+        if (PaymentTransferCalibrator.looksLikePaymentTransferAnswer(text)) {
+            return PaymentTransferCalibrator.qualityScore(answer, summary, fallbackConfidence);
+        }
+
         Calibration calibration = evaluate(answer, summary);
         if (!looksLikeStaleDeletionConsistencyAnswer(text)) {
             return new QualityScore(
@@ -50,6 +54,10 @@ public final class ProductionConsistencyCalibrator {
 
     public static Calibration evaluate(String answer, String summary) {
         String text = normalize(answer + " " + summary);
+        if (PaymentTransferCalibrator.looksLikePaymentTransferAnswer(text)) {
+            return PaymentTransferCalibrator.evaluate(answer, summary);
+        }
+
         if (!looksLikeStaleDeletionConsistencyAnswer(text)) {
             return new Calibration(1.0, List.of());
         }
@@ -143,6 +151,10 @@ public final class ProductionConsistencyCalibrator {
 
     public static Map<String, Double> dimensionScores(String answer, String summary) {
         String text = normalize(answer + " " + summary);
+        if (PaymentTransferCalibrator.looksLikePaymentTransferAnswer(text)) {
+            return PaymentTransferCalibrator.dimensionScores(answer, summary);
+        }
+
         if (!looksLikeStaleDeletionConsistencyAnswer(text)) {
             return Map.of();
         }
