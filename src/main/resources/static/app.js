@@ -768,6 +768,14 @@ function dimensionGrid(dimensions) {
   }
 
   const order = [
+    ["transfer_decision", "Transfer decision"],
+    ["idempotency_safety", "Idempotency safety"],
+    ["atomicity", "Atomicity"],
+    ["crash_recovery", "Crash recovery"],
+    ["locking_concurrency", "Locking/concurrency"],
+    ["redis_role", "Redis role"],
+    ["kafka_outbox_safety", "Kafka/outbox safety"],
+    ["fraud_path", "Fraud path"],
     ["correct_endpoint_decision", "Endpoint decision"],
     ["deletion_safety", "Deletion safety"],
     ["replica_lag_awareness", "Replica lag"],

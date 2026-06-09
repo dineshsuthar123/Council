@@ -117,6 +117,78 @@ class ProductionConsistencyCalibratorTest {
                 "The overall answer can remain strong, but unsafe precedence should keep it below elite");
     }
 
+    @Test
+    @DisplayName("Unsafe wallet transfer algorithm is hard capped by payment rubric")
+    void unsafeWalletTransferAlgorithmIsHardCappedByPaymentRubric() {
+        ProductionConsistencyCalibrator.QualityScore quality =
+                ProductionConsistencyCalibrator.qualityScore("""
+                        For a wallet payment transfer from U1 to U2 with Redis, PostgreSQL, and Kafka:
+                        Pseudocode:
+                        1. Receive transfer request with idempotency key.
+                        2. Check Redis for existing idempotency key; if found, return failure.
+                        3. Begin PostgreSQL transaction.
+                        4. Debit U1.
+                        5. Emit Kafka event for debit.
+                        6. Credit U2.
+                        7. Emit Kafka event for credit.
+                        8. Commit PostgreSQL transaction.
+                        9. Store idempotency record in PostgreSQL.
+                        Fraud detection should never block synchronously; handle it async later.
+                        """, null, 0.95);
+
+        assertTrue(quality.score() <= 0.50,
+                "Dangerous payment ordering must not be scored as production-grade");
+        assertTrue(quality.dimensions().containsKey("idempotency_safety"));
+        assertFalse(quality.dimensions().containsKey("deletion_safety"),
+                "Wallet transfers must not reuse URL-shortener dimension labels");
+        assertTrue(quality.dimensions().get("idempotency_safety") <= 0.25);
+        assertTrue(quality.dimensions().get("kafka_outbox_safety") <= 0.25);
+        assertTrue(quality.dimensions().get("pseudocode") <= 0.20);
+        assertTrue(quality.reasons().stream().anyMatch(reason -> reason.contains("same idempotency key")));
+        assertTrue(quality.reasons().stream().anyMatch(reason -> reason.contains("outbox")));
+    }
+
+    @Test
+    @DisplayName("Safe wallet transfer algorithm receives payment-specific dimensions")
+    void safeWalletTransferAlgorithmReceivesPaymentSpecificDimensions() {
+        ProductionConsistencyCalibrator.QualityScore quality =
+                ProductionConsistencyCalibrator.qualityScore("""
+                        The wallet transfer must succeed exactly once or remain PROCESSING/PENDING_REVIEW;
+                        U1 must never be debited twice and U2 must never be missed after U1 is debited.
+                        Redis is only a fast-path cache. PostgreSQL is the source of truth.
+                        Pseudocode:
+                        begin transaction;
+                        idem = insert or lock idempotency record by idempotency key and request hash;
+                        if idem.status == SUCCEEDED return stored response;
+                        if idem.status == PROCESSING return 202 current status;
+                        lock both wallet rows with SELECT FOR UPDATE in deterministic order by account id;
+                        verify U1 has sufficient balance;
+                        insert transfer row status PROCESSING;
+                        debit U1 and credit U2 atomically in the same transaction;
+                        mark transfer SUCCEEDED and store final response in the idempotency record;
+                        insert transactional outbox event with unique event id in the same transaction;
+                        commit;
+                        an outbox worker or Debezium publisher sends Kafka events idempotently after commit.
+                        If fraud is advisory, run it async; if policy must block risky transfers, run synchronous
+                        risk checks before committing or mark the transfer PENDING_REVIEW with compensation rules.
+                        Observe idempotency replay/conflict rate, row lock wait/deadlocks, outbox lag, Kafka publish
+                        failures, balance invariant violations, reconciliation drift, pending_review counts,
+                        transaction id/correlation id logs, and duplicate event IDs.
+                        A weaker system would return failure for the same idempotency key, trust Redis as source
+                        of truth, emit Kafka before commit, create idempotency after debit, split debit and credit,
+                        and make fraud async-only without policy conditions.
+                        """, null, 0.80);
+
+        assertTrue(quality.score() >= 0.84,
+                () -> "Safe payment ordering should score strongly, score=" + quality.score()
+                        + ", dimensions=" + quality.dimensions()
+                        + ", reasons=" + quality.reasons());
+        assertDimensionAtLeast(quality.dimensions(), "idempotency_safety", 0.88);
+        assertDimensionAtLeast(quality.dimensions(), "atomicity", 0.90);
+        assertDimensionAtLeast(quality.dimensions(), "kafka_outbox_safety", 0.88);
+        assertDimensionAtLeast(quality.dimensions(), "redis_role", 0.88);
+    }
+
     private void assertDimensionAtLeast(Map<String, Double> dimensions, String key, double min) {
         assertTrue(dimensions.containsKey(key), "Missing dimension " + key);
         assertTrue(dimensions.get(key) >= min, key + " should be at least " + min);
