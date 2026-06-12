@@ -12,6 +12,9 @@ spring:
     enabled: false
 
 council:
+  security:
+    admin-username: admin
+    admin-password: test-admin-password
   providers:
     # ── Active providers (all disabled for unit tests — live test overrides) ──
     nvidia:

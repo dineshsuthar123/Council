@@ -11,6 +11,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -46,6 +47,13 @@ class ReasonControllerIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Test
+    @DisplayName("GET / serves static homepage publicly")
+    void homepageIsPublic() throws Exception {
+        mockMvc.perform(get("/"))
+                .andExpect(status().isOk());
+    }
 
     @Test
     @DisplayName("POST /api/v1/reason returns 200 with valid response")
@@ -106,6 +114,7 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("POST /api/v1/design/self-correct returns deterministic repaired design")
+    @WithMockUser(roles = "ADMIN")
     void designSelfCorrectReturnsRepairedDesign() throws Exception {
         mockMvc.perform(post("/api/v1/design/self-correct")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -135,6 +144,7 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("GET /api/v1/metrics returns provider info")
+    @WithMockUser(roles = "ADMIN")
     void metricsReturnsProviderInfo() throws Exception {
         mockMvc.perform(get("/api/v1/metrics"))
                 .andExpect(status().isOk())
@@ -143,6 +153,7 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("GET /api/v1/traces/{bad-id} returns 404")
+    @WithMockUser(roles = "ADMIN")
     void traceNotFound() throws Exception {
         mockMvc.perform(get("/api/v1/traces/00000000-0000-0000-0000-000000000000"))
                 .andExpect(status().isNotFound())
@@ -151,6 +162,7 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("GET /api/v1/traces/{bad-id}/debug returns 404")
+    @WithMockUser(roles = "ADMIN")
     void traceDebugNotFound() throws Exception {
         mockMvc.perform(get("/api/v1/traces/00000000-0000-0000-0000-000000000000/debug"))
                 .andExpect(status().isNotFound())
@@ -159,6 +171,7 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("GET /api/v1/traces/{invalid-uuid} returns 404 gracefully")
+    @WithMockUser(roles = "ADMIN")
     void traceInvalidUuidReturns404() throws Exception {
         mockMvc.perform(get("/api/v1/traces/not-a-uuid"))
                 .andExpect(status().isNotFound())
@@ -167,6 +180,7 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("GET /api/v1/providers/status returns list")
+    @WithMockUser(roles = "ADMIN")
     void providerStatusReturnsList() throws Exception {
         mockMvc.perform(get("/api/v1/providers/status"))
                 .andExpect(status().isOk())
@@ -176,6 +190,7 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("GET /api/v1/providers/scorecards returns list")
+    @WithMockUser(roles = "ADMIN")
     void providerScorecardsReturnsList() throws Exception {
         mockMvc.perform(get("/api/v1/providers/scorecards")
                         .param("limit", "20"))
@@ -185,6 +200,7 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("GET /api/v1/traces returns paginated list")
+    @WithMockUser(roles = "ADMIN")
     void traceListReturnsPaginatedResult() throws Exception {
         mockMvc.perform(get("/api/v1/traces")
                         .param("page", "0")
@@ -200,6 +216,7 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("POST /api/v1/providers/{name}/reset-cooldown resets known provider")
+    @WithMockUser(roles = "ADMIN")
     void resetCooldownSucceeds() throws Exception {
         mockMvc.perform(post("/api/v1/providers/claude/reset-cooldown"))
                 .andExpect(status().isOk())
@@ -208,10 +225,86 @@ class ReasonControllerIntegrationTest {
 
     @Test
     @DisplayName("POST /api/v1/providers/{name}/reset-cooldown returns 404 for unknown provider")
+    @WithMockUser(roles = "ADMIN")
     void resetCooldownUnknownProvider() throws Exception {
         mockMvc.perform(post("/api/v1/providers/unknown-llm/reset-cooldown"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("NOT_FOUND"));
+    }
+
+    @Test
+    @DisplayName("GET unknown /api/v1/* returns structured 404 JSON")
+    void unknownApiPathReturnsStructured404() throws Exception {
+        mockMvc.perform(get("/api/v1/providers"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.message").value("No endpoint found for GET /api/v1/providers"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/traces requires admin authentication")
+    void traceListRequiresAdmin() throws Exception {
+        mockMvc.perform(get("/api/v1/traces"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/traces/{traceId}/debug requires admin authentication")
+    void traceDebugRequiresAdmin() throws Exception {
+        mockMvc.perform(get("/api/v1/traces/00000000-0000-0000-0000-000000000000/debug"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/providers/status requires admin authentication")
+    void providerStatusRequiresAdmin() throws Exception {
+        mockMvc.perform(get("/api/v1/providers/status"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/providers/{name}/reset-cooldown requires admin authentication")
+    void resetCooldownRequiresAdmin() throws Exception {
+        mockMvc.perform(post("/api/v1/providers/claude/reset-cooldown"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/metrics requires admin authentication")
+    void metricsRequiresAdmin() throws Exception {
+        mockMvc.perform(get("/api/v1/metrics"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("GET /actuator/health requires admin authentication")
+    void actuatorHealthRequiresAdmin() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("Non-admin user receives 403 for admin endpoints")
+    @WithMockUser(roles = "USER")
+    void adminEndpointRejectsNonAdminUser() throws Exception {
+        mockMvc.perform(get("/api/v1/metrics"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("FORBIDDEN"));
+    }
+
+    @Test
+    @DisplayName("Admin user can access actuator health")
+    @WithMockUser(roles = "ADMIN")
+    void adminCanAccessActuatorHealth() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").exists());
     }
 }
 

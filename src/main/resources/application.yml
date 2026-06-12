@@ -35,7 +35,8 @@ management:
         include: health,info,metrics,prometheus
   endpoint:
     health:
-      show-details: always
+      show-details: when_authorized
+      roles: ADMIN
   metrics:
     tags:
       application: council
@@ -45,8 +46,8 @@ logging:
     console: "%d{ISO8601} [%thread] [requestId=%X{requestId:-}] [traceId=%X{traceId:-}] [provider=%X{provider:-}] %-5level %logger{36} - %msg%n"
   level:
     com.council: INFO
-    # Set to DEBUG to see full HTTP request/response bodies from adapters
-    com.council.provider: DEBUG
+    # Provider adapters must not log prompt/request/response bodies in production.
+    com.council.provider: INFO
 
 # ── OpenAPI / Swagger ──
 springdoc:
@@ -58,6 +59,10 @@ springdoc:
 
 # ── Council Configuration ──
 council:
+  security:
+    admin-username: ${COUNCIL_ADMIN_USERNAME:admin}
+    admin-password: ${COUNCIL_ADMIN_PASSWORD:}
+
   providers:
     # ── FINAL MODEL STACK ─────────────────────────────────────────────
     # NVIDIA NIM (via OpenAI-compatible adapter) — meta/llama-3.3-70b-instruct (DRAFT)

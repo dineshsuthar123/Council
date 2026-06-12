@@ -29,6 +29,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/council
       DB_USERNAME: council
       DB_PASSWORD: council
+      COUNCIL_ADMIN_USERNAME: ${COUNCIL_ADMIN_USERNAME:-admin}
+      COUNCIL_ADMIN_PASSWORD: ${COUNCIL_ADMIN_PASSWORD:-}
       # ── Final model stack ──
       NVIDIA_LLAMA_API_KEY: ${NVIDIA_LLAMA_API_KEY:-}
       NVIDIA_DEEPSEEK_API_KEY: ${NVIDIA_DEEPSEEK_API_KEY:-}
