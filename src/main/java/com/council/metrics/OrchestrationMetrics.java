@@ -117,4 +117,19 @@ public class OrchestrationMetrics {
                 .register(registry)
                 .increment();
     }
+
+    public void recordBudgetStop(String reason, String taskType) {
+        Counter.builder("council.orchestration.budget_stops")
+                .tag("reason", reason == null ? "unknown" : reason)
+                .tag("task_type", taskType == null ? "UNKNOWN" : taskType)
+                .register(registry)
+                .increment();
+    }
+
+    public void recordDegradedMode(String reason) {
+        Counter.builder("council.orchestration.degraded")
+                .tag("reason", reason == null ? "unknown" : reason)
+                .register(registry)
+                .increment();
+    }
 }

@@ -89,6 +89,12 @@ public class CouncilProperties {
         private int criticTimeoutSeconds = 120;
         private int verifierTimeoutSeconds = 30;
         private int synthesisTimeoutSeconds = 60;
+        private int requestTimeoutSeconds = 90;
+        private int perProviderDeadlineSeconds = 30;
+        private boolean earlyStopEnabled = false;
+        private double earlyStopQualityThreshold = 0.88;
+        private double earlyStopMinImprovement = 0.06;
+        private Map<String, TaskBudgetConfig> taskBudgets = new HashMap<>();
 
         public int getMaxRetries() { return maxRetries; }
         public void setMaxRetries(int maxRetries) { this.maxRetries = maxRetries; }
@@ -104,6 +110,37 @@ public class CouncilProperties {
         public void setVerifierTimeoutSeconds(int verifierTimeoutSeconds) { this.verifierTimeoutSeconds = verifierTimeoutSeconds; }
         public int getSynthesisTimeoutSeconds() { return synthesisTimeoutSeconds; }
         public void setSynthesisTimeoutSeconds(int synthesisTimeoutSeconds) { this.synthesisTimeoutSeconds = synthesisTimeoutSeconds; }
+        public int getRequestTimeoutSeconds() { return requestTimeoutSeconds; }
+        public void setRequestTimeoutSeconds(int requestTimeoutSeconds) { this.requestTimeoutSeconds = requestTimeoutSeconds; }
+        public int getPerProviderDeadlineSeconds() { return perProviderDeadlineSeconds; }
+        public void setPerProviderDeadlineSeconds(int perProviderDeadlineSeconds) { this.perProviderDeadlineSeconds = perProviderDeadlineSeconds; }
+        public boolean isEarlyStopEnabled() { return earlyStopEnabled; }
+        public void setEarlyStopEnabled(boolean earlyStopEnabled) { this.earlyStopEnabled = earlyStopEnabled; }
+        public double getEarlyStopQualityThreshold() { return earlyStopQualityThreshold; }
+        public void setEarlyStopQualityThreshold(double earlyStopQualityThreshold) { this.earlyStopQualityThreshold = earlyStopQualityThreshold; }
+        public double getEarlyStopMinImprovement() { return earlyStopMinImprovement; }
+        public void setEarlyStopMinImprovement(double earlyStopMinImprovement) { this.earlyStopMinImprovement = earlyStopMinImprovement; }
+        public Map<String, TaskBudgetConfig> getTaskBudgets() { return taskBudgets; }
+        public void setTaskBudgets(Map<String, TaskBudgetConfig> taskBudgets) { this.taskBudgets = taskBudgets; }
+    }
+
+    public static class TaskBudgetConfig {
+        private int requestTimeoutSeconds;
+        private int draftTimeoutSeconds;
+        private int perProviderDeadlineSeconds;
+        private int maxDraftProviders;
+        private double earlyStopQualityThreshold;
+
+        public int getRequestTimeoutSeconds() { return requestTimeoutSeconds; }
+        public void setRequestTimeoutSeconds(int requestTimeoutSeconds) { this.requestTimeoutSeconds = requestTimeoutSeconds; }
+        public int getDraftTimeoutSeconds() { return draftTimeoutSeconds; }
+        public void setDraftTimeoutSeconds(int draftTimeoutSeconds) { this.draftTimeoutSeconds = draftTimeoutSeconds; }
+        public int getPerProviderDeadlineSeconds() { return perProviderDeadlineSeconds; }
+        public void setPerProviderDeadlineSeconds(int perProviderDeadlineSeconds) { this.perProviderDeadlineSeconds = perProviderDeadlineSeconds; }
+        public int getMaxDraftProviders() { return maxDraftProviders; }
+        public void setMaxDraftProviders(int maxDraftProviders) { this.maxDraftProviders = maxDraftProviders; }
+        public double getEarlyStopQualityThreshold() { return earlyStopQualityThreshold; }
+        public void setEarlyStopQualityThreshold(double earlyStopQualityThreshold) { this.earlyStopQualityThreshold = earlyStopQualityThreshold; }
     }
 
     /**

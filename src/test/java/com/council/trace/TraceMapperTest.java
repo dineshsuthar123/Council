@@ -2,6 +2,9 @@ package com.council.trace;
 
 import com.council.api.dto.FinalResponse;
 import com.council.common.TraceStatus;
+import com.council.judge.invariant.InvariantCriticResult;
+import com.council.judge.invariant.InvariantLibrary;
+import com.council.judge.invariant.InvariantViolation;
 import com.council.model.CriticResult;
 import com.council.model.DraftResult;
 import com.council.model.JudgeRanking;
@@ -48,7 +51,8 @@ class TraceMapperTest {
                         "Prompt asks for current information.",
                         List.of("latest routing"),
                         List.of(new ResearchSource("S1", "Routing source", "https://example.com",
-                                "example.com", "snippet", "2026-01-01", 0.9))));
+                                "example.com", "snippet", "2026-01-01", 0.9))))
+                .withInvariants(sampleInvariantResult());
 
         mapper.populateEntity(entity, drafts, critic, judge, response, 1500);
 
@@ -63,6 +67,7 @@ class TraceMapperTest {
         assertEquals(0.95, entity.getModelAgreement());
         assertTrue(entity.getScoreDimensions().contains("\"pseudocode\":0.42"));
         assertTrue(entity.getResearchContext().contains("\"id\":\"S1\""));
+        assertTrue(entity.getInvariantFindings().contains("\"invariantId\":\"url.tombstone_precedes_active_cache\""));
         assertEquals("Winner by default", entity.getJudgeReason());
         assertEquals("gemini", entity.getUsedProviders());
         assertEquals("deepseek", entity.getFailedProviders());
@@ -91,6 +96,7 @@ class TraceMapperTest {
         entity.setModelAgreement(0.95);
         entity.setScoreDimensions("{\"pseudocode\":0.42}");
         entity.setResearchContext("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}");
+        entity.setInvariantFindings("{\"overallCap\":0.75}");
         entity.setTotalLatencyMs(1000L);
 
         var resp = mapper.toResponse(entity);
@@ -103,6 +109,7 @@ class TraceMapperTest {
         assertEquals(0.95, resp.modelAgreement());
         assertEquals("{\"pseudocode\":0.42}", resp.dimensions());
         assertEquals("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}", resp.researchContext());
+        assertEquals("{\"overallCap\":0.75}", resp.invariantFindings());
         assertEquals(List.of("gemini", "deepseek"), resp.usedProviders());
         assertTrue(resp.failedProviders().isEmpty());
     }
@@ -133,6 +140,7 @@ class TraceMapperTest {
         entity.setModelAgreement(0.95);
         entity.setScoreDimensions("{\"pseudocode\":0.42,\"deletion_safety\":0.9}");
         entity.setResearchContext("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}");
+        entity.setInvariantFindings("{\"overallCap\":0.75,\"violations\":[]}");
         entity.setJudgeReason("Gemini had the highest composite score");
         entity.setTotalLatencyMs(2500L);
         entity.setDraftResults("{\"drafts\":[]}");
@@ -163,6 +171,7 @@ class TraceMapperTest {
         assertEquals(0.95, debug.modelAgreement());
         assertEquals("{\"pseudocode\":0.42,\"deletion_safety\":0.9}", debug.dimensions());
         assertEquals("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}", debug.researchContext());
+        assertEquals("{\"overallCap\":0.75,\"violations\":[]}", debug.invariantFindings());
     }
 
     @Test
@@ -188,6 +197,13 @@ class TraceMapperTest {
         assertTrue(mapper.splitProviders("").isEmpty());
         assertTrue(mapper.splitProviders("   ").isEmpty());
         assertEquals(List.of("gemini", "claude"), mapper.splitProviders("gemini,claude"));
+    }
+
+    private InvariantCriticResult sampleInvariantResult() {
+        var definition = InvariantLibrary.definition(InvariantLibrary.URL_TOMBSTONE_PRECEDES_ACTIVE_CACHE);
+        return InvariantCriticResult.from(
+                List.of(definition),
+                List.of(InvariantViolation.of(definition, "active cache checked first", "check tombstone first")));
     }
 }
 

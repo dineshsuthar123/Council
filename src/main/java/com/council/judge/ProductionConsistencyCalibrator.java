@@ -1,6 +1,8 @@
 package com.council.judge;
 
 import com.council.common.CouncilUtils;
+import com.council.judge.invariant.InvariantCriticResult;
+import com.council.judge.invariant.InvariantDomain;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -50,6 +52,16 @@ public final class ProductionConsistencyCalibrator {
         double weightedScore = weightedScore(dimensions);
         double score = Math.min(weightedScore, hardSafetyCap(text));
         return new QualityScore(CouncilUtils.clamp01(score), dimensions, calibration.reasons());
+    }
+
+    public static QualityScore qualityScore(String answer,
+                                            String summary,
+                                            double fallbackConfidence,
+                                            InvariantCriticResult invariantResult) {
+        QualityScore base = qualityScore(answer, summary, fallbackConfidence);
+        return applyInvariantCap(base, invariantResult,
+                InvariantDomain.PAYMENT_TRANSFER,
+                InvariantDomain.URL_SHORTENER);
     }
 
     public static Calibration evaluate(String answer, String summary) {
@@ -183,6 +195,25 @@ public final class ProductionConsistencyCalibrator {
                 + (scores.getOrDefault("tradeoffs", 0.0) * 0.10)
                 + (scores.getOrDefault("pseudocode", 0.0) * 0.10)
                 + (scores.getOrDefault("common_mistakes", 0.0) * 0.05);
+    }
+
+    private static QualityScore applyInvariantCap(QualityScore base,
+                                                  InvariantCriticResult invariantResult,
+                                                  InvariantDomain... domains) {
+        if (invariantResult == null || !invariantResult.evaluated()) {
+            return base;
+        }
+        double cap = invariantResult.capForDomains(domains);
+        Map<String, Double> dimensions = new LinkedHashMap<>(base.dimensions());
+        dimensions.putAll(invariantResult.dimensionScoresForDomains(domains));
+
+        List<String> reasons = new ArrayList<>(base.reasons());
+        reasons.addAll(invariantResult.violationReasonsForDomains(domains));
+
+        return new QualityScore(
+                CouncilUtils.clamp01(Math.min(base.score(), cap)),
+                Collections.unmodifiableMap(dimensions),
+                List.copyOf(reasons));
     }
 
     private static double hardSafetyCap(String text) {

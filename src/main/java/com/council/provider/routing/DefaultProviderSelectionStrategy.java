@@ -42,6 +42,7 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
             List.of("deepseek", "mistral", "openrouter", "groq");
 
     private final CouncilProperties.RoutingConfig routingConfig;
+    private final CouncilProperties.OrchestratorConfig orchestratorConfig;
     private final ProviderConcurrencyLimiter concurrencyLimiter;
 
     /* last decision for observability (per-thread safe via volatile) */
@@ -50,6 +51,7 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
     public DefaultProviderSelectionStrategy(CouncilProperties properties,
                                             ProviderConcurrencyLimiter concurrencyLimiter) {
         this.routingConfig = properties.getRouting();
+        this.orchestratorConfig = properties.getOrchestrator();
         this.concurrencyLimiter = concurrencyLimiter;
     }
 
@@ -67,7 +69,7 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
                                                  Map<String, LlmAdapter> adapters,
                                                  String traceId, TaskType taskType) {
         List<RoutingDecision.SkippedProvider> skipped = new ArrayList<>();
-        int maxDrafts = routingConfig.getMaxDraftProviders();
+        int maxDrafts = maxDraftProviders(taskType);
 
         // Filter to draft-eligible, available, and concurrency-ok
         List<ProviderDescriptor> candidates = descriptors.stream()
@@ -168,6 +170,21 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
                         .thenComparingInt(ProviderDescriptor::priority)
                         .thenComparing(Comparator.comparingDouble(ProviderDescriptor::reliability).reversed()))
                 .toList();
+    }
+
+    private int maxDraftProviders(TaskType taskType) {
+        int fallback = Math.max(1, routingConfig.getMaxDraftProviders());
+        Map<String, CouncilProperties.TaskBudgetConfig> budgets = orchestratorConfig.getTaskBudgets();
+        CouncilProperties.TaskBudgetConfig budget = budgets == null ? null : budgets.get(taskKey(taskType));
+        if (budget == null || budget.getMaxDraftProviders() <= 0) {
+            return fallback;
+        }
+        return Math.min(fallback, budget.getMaxDraftProviders());
+    }
+
+    private String taskKey(TaskType taskType) {
+        TaskType type = taskType == null ? TaskType.GENERAL_REASONING : taskType;
+        return type.name().toLowerCase(Locale.ROOT).replace('_', '-');
     }
 
     /* ── Critic selection ───────────────────────────────────────────── */

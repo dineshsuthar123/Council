@@ -176,6 +176,61 @@ class TaskAwareRoutingTest {
        ══════════════════════════════════════════════════════════════════ */
 
     @Nested
+    @DisplayName("Task budget fan-out caps")
+    class TaskBudgetFanOutTests {
+
+        @Test
+        @DisplayName("GENERAL_REASONING honors task budget fan-out cap")
+        void generalReasoningHonorsTaskBudgetFanOutCap() {
+            CouncilProperties.TaskBudgetConfig budget = new CouncilProperties.TaskBudgetConfig();
+            budget.setMaxDraftProviders(2);
+            properties.getOrchestrator().setTaskBudgets(Map.of("general-reasoning", budget));
+
+            List<ProviderDescriptor> descriptors = List.of(
+                    desc("groq", 3),
+                    desc("deepseek", 1),
+                    desc("openrouter", 2),
+                    desc("together", 4)
+            );
+
+            List<LlmAdapter> selected = strategy.selectDraftProviders(
+                    descriptors, adapters, "trace-budget-1", TaskType.GENERAL_REASONING);
+
+            assertEquals(2, selected.size());
+            assertEquals("deepseek", selected.get(0).providerName());
+            assertEquals("openrouter", selected.get(1).providerName());
+        }
+
+        @Test
+        @DisplayName("DEBUGGING can keep deeper fan-out than GENERAL_REASONING")
+        void debuggingKeepsDeeperFanOut() {
+            CouncilProperties.TaskBudgetConfig general = new CouncilProperties.TaskBudgetConfig();
+            general.setMaxDraftProviders(2);
+            CouncilProperties.TaskBudgetConfig debugging = new CouncilProperties.TaskBudgetConfig();
+            debugging.setMaxDraftProviders(3);
+            properties.getOrchestrator().setTaskBudgets(Map.of(
+                    "general-reasoning", general,
+                    "debugging", debugging
+            ));
+
+            List<ProviderDescriptor> descriptors = List.of(
+                    desc("groq", 3),
+                    desc("deepseek", 1),
+                    desc("openrouter", 2),
+                    desc("mistral", 5)
+            );
+
+            List<LlmAdapter> selected = strategy.selectDraftProviders(
+                    descriptors, adapters, "trace-budget-2", TaskType.DEBUGGING);
+
+            assertEquals(3, selected.size());
+            assertEquals("deepseek", selected.get(0).providerName());
+            assertEquals("mistral", selected.get(1).providerName());
+            assertEquals("openrouter", selected.get(2).providerName());
+        }
+    }
+
+    @Nested
     @DisplayName("CODING routing (default priority)")
     class CodingRoutingTests {
 

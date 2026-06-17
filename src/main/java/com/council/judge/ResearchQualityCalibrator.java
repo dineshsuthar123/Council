@@ -1,9 +1,12 @@
 package com.council.judge;
 
 import com.council.common.CouncilUtils;
+import com.council.judge.invariant.InvariantCriticResult;
+import com.council.judge.invariant.InvariantDomain;
 import com.council.research.ResearchPack;
 import com.council.research.ResearchSource;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -80,6 +83,28 @@ public final class ResearchQualityCalibrator {
                 citations.isEmpty()
                         ? List.of("research answer did not cite the provided evidence pack")
                         : List.of());
+    }
+
+    public static QualityScore qualityScore(String answer,
+                                            ResearchPack pack,
+                                            double fallbackScore,
+                                            InvariantCriticResult invariantResult) {
+        QualityScore base = qualityScore(answer, pack, fallbackScore);
+        if (invariantResult == null || !invariantResult.evaluated()) {
+            return base;
+        }
+
+        double cap = invariantResult.capForDomains(InvariantDomain.RESEARCH_EVIDENCE);
+        Map<String, Double> dimensions = new LinkedHashMap<>(base.dimensions());
+        dimensions.putAll(invariantResult.dimensionScoresForDomains(InvariantDomain.RESEARCH_EVIDENCE));
+
+        List<String> reasons = new ArrayList<>(base.reasons());
+        reasons.addAll(invariantResult.violationReasonsForDomains(InvariantDomain.RESEARCH_EVIDENCE));
+
+        return new QualityScore(
+                CouncilUtils.clamp01(Math.min(base.score(), cap)),
+                Map.copyOf(dimensions),
+                List.copyOf(reasons));
     }
 
     private static double scoreSourceQuality(List<ResearchSource> sources) {
