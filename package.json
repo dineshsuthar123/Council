@@ -1,0 +1,13 @@
+{
+  "name": "council-operator-ui",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "test:ui": "playwright test",
+    "test:ui:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.11.3",
+    "@playwright/test": "1.61.0"
+  }
+}

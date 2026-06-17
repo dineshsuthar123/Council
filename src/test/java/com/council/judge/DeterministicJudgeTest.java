@@ -256,8 +256,8 @@ class DeterministicJudgeTest {
         JudgeResult result = judge.evaluate(List.of(strongButNotPerfect), null);
 
         assertEquals("nvidia", result.winnerProvider());
-        assertTrue(result.winnerScore() >= 0.82 && result.winnerScore() <= 0.88,
-                "This answer should score as strong but not elite because tombstone loses precedence in pseudocode");
+        assertTrue(result.winnerScore() >= 0.70 && result.winnerScore() <= 0.80,
+                "This answer should remain useful but be capped below strong/elite because tombstone loses precedence in pseudocode");
     }
 
     @Test

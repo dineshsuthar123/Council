@@ -73,3 +73,6 @@ Metrics are emitted through:
 
 The final answer still preserves the existing quality breakdown fields:
 answer quality, winner confidence, model agreement, and rubric dimensions.
+
+Trace redaction, retention, export outbox, operator auth, and browser smoke test
+expectations are documented in [TRACE_OPERATIONS.md](TRACE_OPERATIONS.md).

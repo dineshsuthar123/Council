@@ -1,7 +1,11 @@
 package com.council.orchestrator;
 
+import com.council.research.ResearchPack;
+import com.council.research.ResearchSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -44,6 +48,57 @@ class FinalAnswerCompletenessGuardTest {
         String answer = "A concrete algorithm is provided below.";
 
         assertEquals(answer, FinalAnswerCompletenessGuard.repair("Explain gravity", answer));
+    }
+
+    @Test
+    @DisplayName("Composes URL shortener answer into operator-readable template")
+    void composesUrlShortenerTemplate() {
+        String composed = FinalAnswerCompletenessGuard.compose(urlShortenerPrompt(),
+                "Return 404/410 because deleted aliases must not redirect. Use tombstones, primary reads, and singleflight.",
+                ResearchPack.notRequired());
+
+        assertTemplateSections(composed);
+        assertTrue(composed.contains("Return `404 Not Found` or `410 Gone`"));
+        assertTrue(composed.contains("RedirectResult resolve"));
+        assertTrue(composed.contains("Trusting Redis TTL"));
+    }
+
+    @Test
+    @DisplayName("Composes payment transfer answer into structured template")
+    void composesPaymentTemplate() {
+        String composed = FinalAnswerCompletenessGuard.compose("""
+                A wallet payment transfer uses PostgreSQL, Redis, Kafka, debit/credit, and idempotency key handling.
+                Explain same idempotency key with different body.
+                """,
+                "Use request hashes, a single transaction, row locks, and transactional outbox events.",
+                ResearchPack.notRequired());
+
+        assertTemplateSections(composed);
+        assertTrue(composed.contains("idempotency key with a different request body"));
+        assertTrue(composed.contains("TransferResult transfer"));
+        assertTrue(composed.contains("Publishing Kafka events before commit"));
+    }
+
+    @Test
+    @DisplayName("Composes research answer with citation/source-pack warning")
+    void composesResearchTemplate() {
+        String composed = FinalAnswerCompletenessGuard.compose("What is the latest status today?",
+                "The current status is mixed across sources.",
+                ResearchPack.withSources("Current prompt", List.of("latest status"), List.of(
+                        new ResearchSource("S1", "Source", "https://example.com", "example.com",
+                                "snippet", "2026-01-01", 0.9))));
+
+        assertTemplateSections(composed);
+        assertTrue(composed.contains("Use the supplied source IDs"));
+        assertTrue(composed.contains("Concrete Evidence Check"));
+    }
+
+    private void assertTemplateSections(String answer) {
+        assertTrue(answer.contains("### Decision"));
+        assertTrue(answer.contains("### Core Safety Reasoning"));
+        assertTrue(answer.contains("### Tradeoffs"));
+        assertTrue(answer.contains("### Concrete"));
+        assertTrue(answer.contains("### Common Mistakes"));
     }
 
     private String urlShortenerPrompt() {

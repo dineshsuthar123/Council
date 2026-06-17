@@ -50,7 +50,8 @@ const state = {
   selectedMode: "balanced",
   phaseTimer: null,
   eventSource: null,
-  pipelineStatuses: new Map()
+  pipelineStatuses: new Map(),
+  adminAuth: loadAdminAuth()
 };
 
 const els = {
@@ -69,7 +70,12 @@ const els = {
   routing: document.querySelector("#routing-mode"),
   available: document.querySelector("#available-count"),
   research: document.querySelector("#research-mode"),
-  toast: document.querySelector("#toast-region")
+  toast: document.querySelector("#toast-region"),
+  adminForm: document.querySelector("#admin-auth-form"),
+  adminUsername: document.querySelector("#admin-username"),
+  adminPassword: document.querySelector("#admin-password"),
+  adminLock: document.querySelector("#admin-lock"),
+  adminStatus: document.querySelector("#admin-auth-status")
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -82,6 +88,9 @@ function bindEvents() {
   els.form.addEventListener("submit", runCouncil);
   els.reloadTraces.addEventListener("click", loadTraces);
   els.refresh.addEventListener("click", refreshAll);
+  els.adminForm.addEventListener("submit", unlockAdmin);
+  els.adminLock.addEventListener("click", lockAdmin);
+  hydrateAdminForm();
 
   document.querySelectorAll("[data-prompt]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -117,7 +126,7 @@ async function runCouncil(event) {
   renderPipeline("running", 0);
 
   try {
-    if ("EventSource" in window) {
+    if (typeof EventSource === "function") {
       await runCouncilStream(query);
     } else {
       await runCouncilSync(query);
@@ -390,14 +399,19 @@ async function loadHealth() {
 }
 
 async function loadProviders() {
+  if (!hasAdminAuth()) {
+    els.providerCount.textContent = "Locked";
+    els.providerTable.innerHTML = lockedPanel("Provider status requires admin credentials.");
+    return;
+  }
   renderProviderSkeleton();
   try {
     const [providers, scorecards] = await Promise.all([
-      fetchJson(`${API_BASE}/providers/status`),
-      fetchJson(`${API_BASE}/providers/scorecards?limit=300`)
+      fetchJson(`${API_BASE}/providers/status`, { admin: true }),
+      fetchJson(`${API_BASE}/providers/scorecards?limit=300`, { admin: true })
     ]);
     const scorecardByProvider = new Map((scorecards || []).map((scorecard) => [scorecard.provider, scorecard]));
-    els.providerCount.textContent = `${providers.length} providers · ${scorecards.length} scored`;
+    els.providerCount.textContent = `${providers.length} providers - ${scorecards.length} scored`;
     els.providerTable.innerHTML = providers
       .map((provider) => renderProviderRow(provider, scorecardByProvider.get(provider.provider)))
       .join("") || emptyInline("No providers configured.");
@@ -456,7 +470,10 @@ function bindProviderActions() {
       const provider = button.dataset.reset;
       button.disabled = true;
       try {
-        await fetchJson(`${API_BASE}/providers/${encodeURIComponent(provider)}/reset-cooldown`, { method: "POST" });
+        await fetchJson(`${API_BASE}/providers/${encodeURIComponent(provider)}/reset-cooldown`, {
+          method: "POST",
+          admin: true
+        });
         toast(`Cooldown reset for ${provider}.`);
         await Promise.all([loadProviders(), loadHealth()]);
       } catch (error) {
@@ -468,9 +485,13 @@ function bindProviderActions() {
 }
 
 async function loadTraces() {
+  if (!hasAdminAuth()) {
+    els.traceList.innerHTML = lockedPanel("Trace history requires admin credentials.");
+    return;
+  }
   renderTraceSkeleton();
   try {
-    const page = await fetchJson(`${API_BASE}/traces?page=0&size=8`);
+    const page = await fetchJson(`${API_BASE}/traces?page=0&size=8`, { admin: true });
     const traces = Array.isArray(page.content) ? page.content : [];
     els.traceList.innerHTML = traces.map(renderTraceItem).join("") || emptyInline("No traces yet.");
     bindTraceItems();
@@ -514,7 +535,7 @@ function bindTraceItems() {
 
 async function loadTraceDebug(traceId) {
   try {
-    const debug = await fetchJson(`${API_BASE}/traces/${encodeURIComponent(traceId)}/debug`);
+    const debug = await fetchJson(`${API_BASE}/traces/${encodeURIComponent(traceId)}/debug`, { admin: true });
     state.currentTraceId = traceId;
     renderTraceDebug(debug);
     document.querySelectorAll("[data-trace]").forEach((item) => item.classList.toggle("active", item.dataset.trace === traceId));
@@ -569,7 +590,19 @@ function renderTraceDebug(debug) {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const { admin = false, headers = {}, ...requestOptions } = options;
+  const requestHeaders = { ...headers };
+  if (admin) {
+    if (!hasAdminAuth()) {
+      throw new Error("Admin credentials are required for this operation.");
+    }
+    requestHeaders.Authorization = `Basic ${btoa(`${state.adminAuth.username}:${state.adminAuth.password}`)}`;
+  }
+
+  const response = await fetch(url, {
+    ...requestOptions,
+    headers: requestHeaders
+  });
   const text = await response.text();
   let payload = {};
   if (text) {
@@ -583,6 +616,61 @@ async function fetchJson(url, options = {}) {
     throw new Error(payload.message || payload.error || `Request failed with ${response.status}`);
   }
   return payload;
+}
+
+function unlockAdmin(event) {
+  event.preventDefault();
+  const username = els.adminUsername.value.trim();
+  const password = els.adminPassword.value;
+  if (!username || !password) {
+    toast("Enter admin username and password to unlock operator surfaces.", true);
+    return;
+  }
+  state.adminAuth = { username, password };
+  sessionStorage.setItem("council.adminAuth", JSON.stringify(state.adminAuth));
+  hydrateAdminForm();
+  toast("Operator surfaces unlocked for this browser session.");
+  Promise.all([loadProviders(), loadTraces()]).catch(() => {});
+}
+
+function lockAdmin() {
+  state.adminAuth = null;
+  sessionStorage.removeItem("council.adminAuth");
+  hydrateAdminForm();
+  loadProviders();
+  loadTraces();
+  toast("Operator surfaces locked.");
+}
+
+function hydrateAdminForm() {
+  const unlocked = hasAdminAuth();
+  els.adminUsername.value = state.adminAuth?.username || "";
+  els.adminPassword.value = state.adminAuth?.password || "";
+  els.adminStatus.textContent = unlocked ? "Ops unlocked" : "Ops locked";
+  els.adminStatus.classList.toggle("is-unlocked", unlocked);
+  els.adminLock.disabled = !unlocked;
+}
+
+function hasAdminAuth() {
+  return Boolean(state.adminAuth?.username && state.adminAuth?.password);
+}
+
+function loadAdminAuth() {
+  try {
+    const raw = sessionStorage.getItem("council.adminAuth");
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function lockedPanel(message) {
+  return `
+    <div class="locked-panel">
+      <strong>Admin access required</strong>
+      <p>${escapeHtml(message)}</p>
+    </div>
+  `;
 }
 
 function formatAnswer(value) {
@@ -806,13 +894,20 @@ function dimensionGrid(dimensions) {
     ["invariant_overall_cap", "Invariant cap"]
   ];
 
-  const rows = order
+  const knownKeys = new Set(order.map(([key]) => key));
+  const extraRows = Object.keys(dimensions)
+    .filter((key) => !knownKeys.has(key))
+    .sort()
+    .map((key) => [key, labelizeDimension(key)]);
+
+  const rows = [...order, ...extraRows]
     .filter(([key]) => dimensions[key] != null)
     .map(([key, label]) => {
       const value = scoreValue(dimensions[key]);
       const pct = Math.round(value * 100);
+      const tone = pct < 60 ? " low" : pct < 80 ? " medium" : "";
       return `
-        <div class="dimension-row">
+        <div class="dimension-row${tone}">
           <div class="dimension-label">
             <span>${escapeHtml(label)}</span>
             <strong>${pct}%</strong>
@@ -874,6 +969,12 @@ function invariantPanel(result) {
   `;
 }
 
+function labelizeDimension(key) {
+  return String(key)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
 function researchPanel(pack) {
   if (!pack || !pack.required) {
     return "";
@@ -888,7 +989,7 @@ function researchPanel(pack) {
     return `
       <article class="source-row">
         <div>
-          <strong>${escapeHtml(source.id || "S?")} · ${escapeHtml(source.title || source.url || "Untitled source")}</strong>
+          <strong>${escapeHtml(source.id || "S?")} - ${escapeHtml(source.title || source.url || "Untitled source")}</strong>
           <p>${escapeHtml(source.snippet || "No snippet captured.")}</p>
           <a href="${href}" target="_blank" rel="noreferrer">${escapeHtml(source.domain || source.url || "source")}</a>
         </div>
@@ -903,6 +1004,7 @@ function researchPanel(pack) {
         <span>Research evidence</span>
         <small><span class="status-dot ${statusClass}"></span>${escapeHtml(statusText)}</small>
       </div>
+      ${sources.length ? "" : `<div class="source-warning">No source pack was available. Treat current-fact claims as unverified.</div>`}
       <p class="research-reason">${escapeHtml(pack.reason || "External research was requested.")}</p>
       ${queries.length ? `<div class="query-chips">${queries.map((query) => `<span>${escapeHtml(query)}</span>`).join("")}</div>` : ""}
       ${sources.length ? `<div class="source-list">${sourceRows}</div>` : `<div class="empty-inline">${escapeHtml(pack.errorMessage || "No source evidence was available for this run.")}</div>`}
@@ -924,13 +1026,16 @@ function providerOutcomePanel(draftResults) {
   const rows = drafts.map((draft) => {
     const status = String(draft.status || (draft.errorMessage ? "FAILURE" : "SUCCESS")).toUpperCase();
     const ok = status === "SUCCESS";
+    const reason = ok
+      ? (draft.summary || "Draft succeeded.")
+      : (draft.errorMessage || draft.summary || "Provider failed without a captured reason.");
     return `
       <div class="provider-outcome-row">
         <div>
           <strong><span class="status-dot ${ok ? "up" : "down"}"></span>${escapeHtml(draft.provider || "unknown")}</strong>
-          <small>${escapeHtml(draft.model || "model --")} · ${draft.latencyMs ?? "--"} ms</small>
+          <small>${escapeHtml(draft.model || "model --")} - ${draft.latencyMs ?? "--"} ms</small>
         </div>
-        <p>${escapeHtml(ok ? (draft.summary || "Draft succeeded.") : (draft.errorMessage || "Provider failed without a captured reason."))}</p>
+        <p class="${ok ? "" : "failure-reason"}">${escapeHtml(reason)}</p>
       </div>
     `;
   }).join("");

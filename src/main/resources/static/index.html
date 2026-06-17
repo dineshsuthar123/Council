@@ -55,6 +55,15 @@
             <h1>Council operator console</h1>
           </div>
           <div class="topbar-actions">
+            <form class="admin-auth" id="admin-auth-form" aria-label="Admin unlock">
+              <label class="sr-only" for="admin-username">Admin username</label>
+              <input id="admin-username" name="username" autocomplete="username" placeholder="admin" aria-label="Admin username">
+              <label class="sr-only" for="admin-password">Admin password</label>
+              <input id="admin-password" name="password" type="password" autocomplete="current-password" placeholder="password" aria-label="Admin password">
+              <button class="ghost-button small" type="submit" id="admin-unlock">Unlock ops</button>
+              <button class="ghost-button small" type="button" id="admin-lock">Lock</button>
+              <span class="auth-status" id="admin-auth-status">Ops locked</span>
+            </form>
             <button class="ghost-button" type="button" id="refresh-button">Refresh</button>
             <a class="primary-link" href="/swagger-ui/index.html">API docs</a>
           </div>
@@ -168,7 +177,7 @@
       </main>
     </div>
 
-    <div class="toast-region" id="toast-region" aria-live="polite" aria-label="Notifications"></div>
+    <div class="toast-region" id="toast-region" role="status" aria-live="polite" aria-label="Notifications"></div>
     <script src="/app.js" defer></script>
   </body>
 </html>

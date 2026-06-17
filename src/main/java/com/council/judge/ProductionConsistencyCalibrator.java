@@ -150,7 +150,7 @@ public final class ProductionConsistencyCalibrator {
             reasons.add("pseudocode is a prose checklist");
         }
         if (activeCachePrecedesTombstoneInPseudocode(text)) {
-            cap = Math.min(cap, 0.85);
+            cap = Math.min(cap, 0.75);
             reasons.add("pseudocode checks active cache before deleted tombstone");
         }
         if (hasShallowTradeoffStatement(text)) {
@@ -239,7 +239,7 @@ public final class ProductionConsistencyCalibrator {
             cap = Math.min(cap, 0.70);
         }
         if (activeCachePrecedesTombstoneInPseudocode(text)) {
-            cap = Math.min(cap, 0.85);
+            cap = Math.min(cap, 0.75);
         }
         return cap;
     }
@@ -384,14 +384,15 @@ public final class ProductionConsistencyCalibrator {
         }
         boolean hasConcrete = hasConcretePseudocode(text);
         if (hasConcrete && activeCachePrecedesTombstoneInPseudocode(text)) {
-            return 0.72;
+            return 0.62;
         }
-        if (hasConcrete && containsAny(text, "singleflight", "lock", "primarydb.findbyalias",
-                "redis.get", "redis.set", "cached == deleted")) {
-            return 0.88;
+        if (hasEliteRedirectPseudocode(text)) {
+            return 0.92;
         }
         if (hasConcrete) {
-            return 0.72;
+            return containsAny(text, "redis.set", "primarydb.findbyalias", "singleflight", "per-key lock")
+                    ? 0.78
+                    : 0.62;
         }
         if (text.contains("pseudocode") || text.contains("algorithm")) {
             return 0.42;
@@ -512,6 +513,29 @@ public final class ProductionConsistencyCalibrator {
                 && containsAny(text, "primary", "primarydb.findbyalias", "db.find", "redis.get",
                         "redis.set", "singleflight", "lock");
         return hasControlFlow && hasRedirectState;
+    }
+
+    private static boolean hasEliteRedirectPseudocode(String text) {
+        if (!hasConcretePseudocode(text) || activeCachePrecedesTombstoneInPseudocode(text)) {
+            return false;
+        }
+        int algorithmStart = firstIndexOf(text, "```", "pseudocode", "algorithm", "resolve(");
+        String scoped = algorithmStart >= 0 ? text.substring(algorithmStart) : text;
+        int tombstoneIndex = firstPositiveIndex(scoped, "cached == deleted", "tombstone", "deleted");
+        int activeIndex = firstPositiveIndex(scoped, "cached == active", "active redirect", "return redirect");
+        boolean tombstoneBeforeActive = tombstoneIndex < activeIndex;
+        return tombstoneBeforeActive
+                && containsAny(scoped, "redis.get", "cachevalue cached", "cached =")
+                && containsAny(scoped, "singleflight", "request coalescing", "per-key lock", "lock")
+                && containsAny(scoped, "primarydb.findbyalias", "read primary", "primary db", "primary database")
+                && containsAny(scoped, "redis.set", "negative cache", "tombstone")
+                && containsAny(scoped, "return 404", "notfoundorgone", "not found", "gone")
+                && containsAny(scoped, "return redirect", "redirect(");
+    }
+
+    private static int firstPositiveIndex(String haystack, String... needles) {
+        int index = firstIndexOf(haystack, needles);
+        return index < 0 ? Integer.MAX_VALUE : index;
     }
 
     private static boolean containsAny(String haystack, String... needles) {

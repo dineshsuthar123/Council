@@ -4,6 +4,7 @@ import com.council.api.dto.TraceDebugResponse;
 import com.council.api.dto.TraceResponse;
 import com.council.api.dto.TraceSummaryResponse;
 import com.council.common.TraceStatus;
+import com.council.trace.export.TraceExportOutboxService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -137,6 +138,22 @@ class TraceServiceTest {
                 List.of(), null, null, null, 100L
         );
         verify(repository).save(any(TraceEntity.class));
+    }
+
+    @Test
+    @DisplayName("persistAsync keeps saving traces when export outbox fails")
+    void persistAsync_savesEntityWhenExportOutboxFails() {
+        TraceExportOutboxService outboxService = mock(TraceExportOutboxService.class);
+        doThrow(new RuntimeException("export unavailable")).when(outboxService).enqueue(any(TraceEntity.class));
+        TraceService serviceWithOutbox = new TraceService(repository, traceMapper, outboxService);
+
+        assertDoesNotThrow(() -> serviceWithOutbox.persistAsync(
+                UUID.randomUUID().toString(), "persist query",
+                List.of(), null, null, null, 100L
+        ));
+
+        verify(repository).save(any(TraceEntity.class));
+        verify(outboxService).enqueue(any(TraceEntity.class));
     }
 }
 
