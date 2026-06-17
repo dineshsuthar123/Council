@@ -11,6 +11,8 @@ import com.council.judge.PromptClassifier;
 import com.council.judge.ProductionConsistencyCalibrator;
 import com.council.judge.ResearchQualityCalibrator;
 import com.council.judge.TaskType;
+import com.council.judge.invariant.InvariantCriticResult;
+import com.council.judge.invariant.InvariantViolationCritic;
 import com.council.metrics.OrchestrationMetrics;
 import com.council.model.*;
 import com.council.provider.LlmAdapter;
@@ -51,6 +53,10 @@ public class ReasoningOrchestrator {
     private static final long DEFAULT_CRITIC_TIMEOUT_SECONDS = 120L;
     private static final long DEFAULT_VERIFIER_TIMEOUT_SECONDS = 30L;
     private static final long DEFAULT_SYNTHESIS_TIMEOUT_SECONDS = 60L;
+    private static final long DEFAULT_REQUEST_TIMEOUT_SECONDS = 90L;
+    private static final long DEFAULT_PER_PROVIDER_DEADLINE_SECONDS = 30L;
+    private static final double DEFAULT_EARLY_STOP_QUALITY_THRESHOLD = 0.88;
+    private static final double DEFAULT_EARLY_STOP_MIN_IMPROVEMENT = 0.06;
 
     private final ProviderRegistry registry;
     private final CriticEngine criticEngine;
@@ -65,10 +71,18 @@ public class ReasoningOrchestrator {
     private final PipelineEventBroadcaster eventBroadcaster;
     private final ResearchService researchService;
     private final ResearchPromptAugmenter researchPromptAugmenter;
+    private final InvariantViolationCritic invariantViolationCritic;
+    private final CouncilProperties.OrchestratorConfig orchestratorConfig;
+    private final Map<String, CouncilProperties.ProviderConfig> providerConfigs;
     private final long draftTimeoutSeconds;
     private final long criticTimeoutSeconds;
     private final long verifierTimeoutSeconds;
     private final long synthesisTimeoutSeconds;
+    private final long requestTimeoutSeconds;
+    private final long perProviderDeadlineSeconds;
+    private final boolean earlyStopEnabled;
+    private final double earlyStopQualityThreshold;
+    private final double earlyStopMinImprovement;
 
     public ReasoningOrchestrator(ProviderRegistry registry,
                                   CriticEngine criticEngine,
@@ -97,7 +111,9 @@ public class ReasoningOrchestrator {
         this.eventBroadcaster = eventBroadcaster;
         this.researchService = researchService;
         this.researchPromptAugmenter = researchPromptAugmenter;
-        CouncilProperties.OrchestratorConfig orchestratorConfig = properties.getOrchestrator();
+        this.invariantViolationCritic = new InvariantViolationCritic();
+        this.orchestratorConfig = properties.getOrchestrator();
+        this.providerConfigs = properties.getProviders() == null ? Map.of() : Map.copyOf(properties.getProviders());
         this.draftTimeoutSeconds = positiveOrDefault(
                 orchestratorConfig.getDraftTimeoutSeconds(), DEFAULT_DRAFT_TIMEOUT_SECONDS);
         this.criticTimeoutSeconds = positiveOrDefault(
@@ -106,6 +122,15 @@ public class ReasoningOrchestrator {
                 orchestratorConfig.getVerifierTimeoutSeconds(), DEFAULT_VERIFIER_TIMEOUT_SECONDS);
         this.synthesisTimeoutSeconds = positiveOrDefault(
                 orchestratorConfig.getSynthesisTimeoutSeconds(), DEFAULT_SYNTHESIS_TIMEOUT_SECONDS);
+        this.requestTimeoutSeconds = positiveOrDefault(
+                orchestratorConfig.getRequestTimeoutSeconds(), DEFAULT_REQUEST_TIMEOUT_SECONDS);
+        this.perProviderDeadlineSeconds = positiveOrDefault(
+                orchestratorConfig.getPerProviderDeadlineSeconds(), DEFAULT_PER_PROVIDER_DEADLINE_SECONDS);
+        this.earlyStopEnabled = orchestratorConfig.isEarlyStopEnabled();
+        this.earlyStopQualityThreshold = positiveDoubleOrDefault(
+                orchestratorConfig.getEarlyStopQualityThreshold(), DEFAULT_EARLY_STOP_QUALITY_THRESHOLD);
+        this.earlyStopMinImprovement = positiveDoubleOrDefault(
+                orchestratorConfig.getEarlyStopMinImprovement(), DEFAULT_EARLY_STOP_MIN_IMPROVEMENT);
     }
 
     /**
@@ -125,6 +150,7 @@ public class ReasoningOrchestrator {
      */
     public FinalResponse reason(String userQuery, String traceId) {
         long startTime = System.currentTimeMillis();
+        long startNanos = System.nanoTime();
         MDC.put(CouncilConstants.MDC_TRACE_ID, traceId);
         metrics.recordRequest();
         ResearchPack researchPack = ResearchPack.notRequired();
@@ -137,9 +163,14 @@ public class ReasoningOrchestrator {
         try {
             // 0. Classify the prompt
             TaskType taskType = promptClassifier.classify(userQuery);
+            ExecutionBudget budget = executionBudget(taskType, startNanos);
             log.info("[orchestrator] Prompt classified as: {}", taskType);
             emit(traceId, "CLASSIFY", "done", "Prompt classified as " + taskType, startTime,
-                    Map.of("taskType", taskType.name()));
+                    Map.of("taskType", taskType.name(),
+                            "requestTimeoutSeconds", budget.requestTimeoutSeconds(),
+                            "draftTimeoutSeconds", budget.draftTimeoutSeconds(),
+                            "perProviderDeadlineSeconds", budget.perProviderDeadlineSeconds(),
+                            "earlyStopQualityThreshold", budget.earlyStopQualityThreshold()));
 
             researchPack = researchService == null
                     ? ResearchPack.notRequired()
@@ -175,13 +206,14 @@ public class ReasoningOrchestrator {
                     providers.stream().map(LlmAdapter::providerName).toList());
             emit(traceId, "ROUTE", "done", providers.size() + " draft providers selected", startTime,
                     Map.of("providers", providers.stream().map(LlmAdapter::providerName).toList(),
-                            "routingEnabled", registry.isRoutingEnabled()));
+                            "routingEnabled", registry.isRoutingEnabled(),
+                            "requestBudgetRemainingMs", budget.remainingMillis()));
 
             // 2. Draft phase
             emit(traceId, "DRAFT", "running", "Draft phase started", startTime,
                     Map.of("providerCount", providers.size()));
             DraftRequest draftRequest = DraftRequest.of(traceId, modelQuery);
-            List<DraftResult> allDrafts = runDraftPhase(providers, draftRequest);
+            List<DraftResult> allDrafts = runDraftPhase(providers, draftRequest, budget);
             List<DraftResult> traceDrafts = new ArrayList<>(allDrafts);
             traceDraftsForFailure = traceDrafts;
 
@@ -210,7 +242,7 @@ public class ReasoningOrchestrator {
             // 3. Review phases (Critic + Verifier in parallel)
             emit(traceId, "REVIEW", "running", "Critic and verifier phases started", startTime,
                     Map.of("drafts", successfulDrafts.size()));
-            ReviewPhaseResult review = runReviewPhases(traceId, modelQuery, successfulDrafts);
+            ReviewPhaseResult review = runReviewPhases(traceId, modelQuery, successfulDrafts, budget);
             CriticResult criticResult = review.criticResult();
             VerifierBatchResult verifierBatchResult = review.verifierBatchResult();
             boolean enforceConstraintVerifier = shouldEnforceConstraintVerifier(userQuery, taskType);
@@ -259,7 +291,7 @@ public class ReasoningOrchestrator {
             CriticResult finalCritic = criticResult;
             VerifierBatchResult finalVerifier = effectiveVerifierBatchResult;
 
-            if (registry.isRoutingEnabled()) {
+            if (registry.isRoutingEnabled() && budget.hasRemaining()) {
                 List<LlmAdapter> escalationProviders = selectEscalationProviders(
                         traceId, judgeResult.winnerScore(),
                         criticResult.contradictionSeverity(),
@@ -272,7 +304,7 @@ public class ReasoningOrchestrator {
                     emit(traceId, "ESCALATE", "running", "Premium escalation triggered", startTime,
                             Map.of("providers", escalationProviders.stream().map(LlmAdapter::providerName).toList()));
 
-                    List<DraftResult> escalationDrafts = runDraftPhase(escalationProviders, draftRequest);
+                    List<DraftResult> escalationDrafts = runDraftPhase(escalationProviders, draftRequest, budget);
                     traceDrafts.addAll(escalationDrafts);
                     List<DraftResult> successfulEscalation = escalationDrafts.stream()
                             .filter(DraftResult::isSuccess).toList();
@@ -289,7 +321,7 @@ public class ReasoningOrchestrator {
                         List<DraftResult> combined = new ArrayList<>(constraintValidDrafts);
                         combined.addAll(successfulEscalation);
 
-                        ReviewPhaseResult escalatedReview = runReviewPhases(traceId, modelQuery, combined);
+                        ReviewPhaseResult escalatedReview = runReviewPhases(traceId, modelQuery, combined, budget);
                         finalCritic = escalatedReview.criticResult();
                         VerifierBatchResult effectiveEscalatedVerifier = enforceConstraintVerifier
                                 ? escalatedReview.verifierBatchResult()
@@ -316,6 +348,11 @@ public class ReasoningOrchestrator {
                     emit(traceId, "ESCALATE", "done", "Premium escalation completed", startTime,
                             Map.of("successfulDrafts", successfulEscalation.size()));
                 }
+            } else if (registry.isRoutingEnabled()) {
+                metrics.recordBudgetStop("escalation_skipped_request_budget_exhausted", taskType.name());
+                metrics.recordDegradedMode("escalation_skipped_request_budget_exhausted");
+                emit(traceId, "ESCALATE", "degraded", "Escalation skipped because request budget was exhausted",
+                        startTime, Map.of("requestBudgetRemainingMs", budget.remainingMillis()));
             }
 
             // 6. Build final response
@@ -331,7 +368,7 @@ public class ReasoningOrchestrator {
                     finalDrafts,
                     finalVerifier,
                     finalCritic
-            ));
+            ), budget);
             emit(traceId, "SYNTHESIS", synthesisResult != null && synthesisResult.isSuccess() ? "done" : "degraded",
                     synthesisResult != null && synthesisResult.isSuccess()
                             ? "Synthesis completed"
@@ -363,7 +400,7 @@ public class ReasoningOrchestrator {
             }
             finalAnswer = FinalAnswerCompletenessGuard.repair(userQuery, finalAnswer);
             CalibratedFinalQuality finalQuality =
-                    calibrateFinalQuality(finalAnswer, null, finalConfidence, researchPack);
+                    calibrateFinalQuality(userQuery, finalAnswer, null, finalConfidence, researchPack);
             finalConfidence = finalQuality.score();
 
             FinalResponse response = new FinalResponse(
@@ -378,7 +415,8 @@ public class ReasoningOrchestrator {
                     winnerConfidence,
                     modelAgreement(finalJudge.rankings()),
                     finalQuality.dimensions())
-                    .withResearch(researchPack);
+                    .withResearch(researchPack)
+                    .withInvariants(finalQuality.invariants());
 
             long totalLatency = System.currentTimeMillis() - startTime;
             metrics.recordTotalLatency(totalLatency);
@@ -438,25 +476,78 @@ public class ReasoningOrchestrator {
     /* ── Phase 1: Draft generation (parallel via virtual threads) ── */
 
     List<DraftResult> runDraftPhase(List<LlmAdapter> providers, DraftRequest request) {
+        return runDraftPhase(providers, request,
+                executionBudget(TaskType.GENERAL_REASONING, System.nanoTime()));
+    }
+
+    List<DraftResult> runDraftPhase(List<LlmAdapter> providers,
+                                    DraftRequest request,
+                                    ExecutionBudget budget) {
         if (providers == null || providers.isEmpty()) {
             return List.of();
         }
 
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         try {
-            List<Callable<DraftResult>> tasks = providers.stream()
-                    .<Callable<DraftResult>>map(provider -> () -> executeDraftProvider(provider, request))
-                    .toList();
+            ExecutorCompletionService<DraftResult> completionService =
+                    new ExecutorCompletionService<>(executor);
+            Map<Future<DraftResult>, LlmAdapter> pending = new LinkedHashMap<>();
+            Map<String, DraftResult> resultsByProvider = new LinkedHashMap<>();
+            Map<String, Long> providerDeadlines = new HashMap<>();
+            long now = System.nanoTime();
+            long phaseDeadlineNanos = Math.min(
+                    budget.requestDeadlineNanos(),
+                    now + TimeUnit.SECONDS.toNanos(budget.draftTimeoutSeconds()));
 
-            List<Future<DraftResult>> futures =
-                    executor.invokeAll(tasks, draftTimeoutSeconds, TimeUnit.SECONDS);
-            List<DraftResult> results = new ArrayList<>(futures.size());
-
-            for (int i = 0; i < futures.size(); i++) {
-                results.add(resolveDraftFuture(providers.get(i), futures.get(i)));
+            for (LlmAdapter provider : providers) {
+                Future<DraftResult> future =
+                        completionService.submit(() -> executeDraftProvider(provider, request));
+                pending.put(future, provider);
+                long providerDeadline = now + TimeUnit.SECONDS.toNanos(providerDeadlineSeconds(provider, budget));
+                providerDeadlines.put(provider.providerName(), Math.min(providerDeadline, phaseDeadlineNanos));
             }
 
-            return List.copyOf(results);
+            while (!pending.isEmpty()) {
+                cancelExpiredDrafts(pending, resultsByProvider, providerDeadlines, budget);
+                if (pending.isEmpty()) {
+                    break;
+                }
+
+                now = System.nanoTime();
+                if (now >= phaseDeadlineNanos) {
+                    cancelPendingDrafts(pending, resultsByProvider,
+                            "Draft generation timed out before enough providers completed",
+                            "draft_phase_deadline_exceeded", budget);
+                    break;
+                }
+
+                Future<DraftResult> completed = completionService.poll(
+                        nextDraftPollMillis(pending, providerDeadlines, phaseDeadlineNanos),
+                        TimeUnit.MILLISECONDS);
+                if (completed != null) {
+                    LlmAdapter provider = pending.remove(completed);
+                    if (provider != null) {
+                        resultsByProvider.put(provider.providerName(), resolveDraftFuture(provider, completed));
+                    }
+                }
+
+                EarlyStopDecision earlyStop = earlyStopDecision(resultsByProvider.values(), pending.values(), budget);
+                if (earlyStop.stop()) {
+                    log.info("[orchestrator] Draft early-stop: {}", earlyStop.reason());
+                    cancelPendingDrafts(pending, resultsByProvider, earlyStop.reason(),
+                            earlyStop.metricReason(), budget);
+                    break;
+                }
+            }
+
+            List<DraftResult> ordered = new ArrayList<>(providers.size());
+            for (LlmAdapter provider : providers) {
+                DraftResult result = resultsByProvider.get(provider.providerName());
+                if (result != null) {
+                    ordered.add(result);
+                }
+            }
+            return List.copyOf(ordered);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("[orchestrator] Draft phase interrupted");
@@ -467,6 +558,116 @@ public class ReasoningOrchestrator {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    private void cancelExpiredDrafts(Map<Future<DraftResult>, LlmAdapter> pending,
+                                     Map<String, DraftResult> resultsByProvider,
+                                     Map<String, Long> providerDeadlines,
+                                     ExecutionBudget budget) {
+        long now = System.nanoTime();
+        Iterator<Map.Entry<Future<DraftResult>, LlmAdapter>> iterator = pending.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<Future<DraftResult>, LlmAdapter> entry = iterator.next();
+            Future<DraftResult> future = entry.getKey();
+            LlmAdapter provider = entry.getValue();
+            Long deadline = providerDeadlines.get(provider.providerName());
+            if (!future.isDone() && deadline != null && now >= deadline) {
+                future.cancel(true);
+                iterator.remove();
+                resultsByProvider.put(provider.providerName(), DraftResult.failure(
+                        provider.providerName(),
+                        provider.modelName(),
+                        "Draft generation timed out after per-provider deadline",
+                        TimeUnit.SECONDS.toMillis(providerDeadlineSeconds(provider, budget))));
+                metrics.recordBudgetStop("provider_deadline_exceeded", budget.taskType().name());
+                metrics.recordDegradedMode("provider_deadline_exceeded");
+            }
+        }
+    }
+
+    private void cancelPendingDrafts(Map<Future<DraftResult>, LlmAdapter> pending,
+                                     Map<String, DraftResult> resultsByProvider,
+                                     String reason,
+                                     String metricReason,
+                                     ExecutionBudget budget) {
+        if (!pending.isEmpty()) {
+            metrics.recordBudgetStop(metricReason, budget.taskType().name());
+        }
+        Iterator<Map.Entry<Future<DraftResult>, LlmAdapter>> iterator = pending.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<Future<DraftResult>, LlmAdapter> entry = iterator.next();
+            Future<DraftResult> future = entry.getKey();
+            LlmAdapter provider = entry.getValue();
+            future.cancel(true);
+            iterator.remove();
+            resultsByProvider.putIfAbsent(provider.providerName(), DraftResult.failure(
+                    provider.providerName(), provider.modelName(), reason, 0));
+            metrics.recordDegradedMode(metricReason);
+        }
+    }
+
+    private long nextDraftPollMillis(Map<Future<DraftResult>, LlmAdapter> pending,
+                                     Map<String, Long> providerDeadlines,
+                                     long phaseDeadlineNanos) {
+        long nextDeadline = phaseDeadlineNanos;
+        for (LlmAdapter provider : pending.values()) {
+            Long providerDeadline = providerDeadlines.get(provider.providerName());
+            if (providerDeadline != null) {
+                nextDeadline = Math.min(nextDeadline, providerDeadline);
+            }
+        }
+        long remaining = remainingMillisZero(nextDeadline);
+        return Math.max(1L, Math.min(250L, remaining));
+    }
+
+    private EarlyStopDecision earlyStopDecision(Collection<DraftResult> results,
+                                                Collection<LlmAdapter> pendingProviders,
+                                                ExecutionBudget budget) {
+        if (!budget.earlyStopEnabled() || pendingProviders.isEmpty()) {
+            return EarlyStopDecision.continueWaiting();
+        }
+
+        Optional<DraftResult> best = results.stream()
+                .filter(DraftResult::isSuccess)
+                .max(Comparator.comparingDouble(DraftResult::confidence));
+        if (best.isEmpty()) {
+            return EarlyStopDecision.continueWaiting();
+        }
+
+        double bestConfidence = best.get().confidence();
+        if (bestConfidence >= budget.earlyStopQualityThreshold()) {
+            return EarlyStopDecision.stop(
+                    "Draft skipped: early stop after sufficient draft confidence "
+                            + formatScore(bestConfidence)
+                            + " >= " + formatScore(budget.earlyStopQualityThreshold()),
+                    "early_stop_quality_sufficient");
+        }
+
+        double bestRemainingCeiling = pendingProviders.stream()
+                .mapToDouble(provider -> expectedProviderCeiling(provider.providerName()))
+                .max()
+                .orElse(0.0);
+        if (bestConfidence + budget.earlyStopMinImprovement() >= bestRemainingCeiling) {
+            return EarlyStopDecision.stop(
+                    "Draft skipped: remaining providers were unlikely to materially improve the current best draft",
+                    "early_stop_no_material_improvement");
+        }
+
+        return EarlyStopDecision.continueWaiting();
+    }
+
+    private long providerDeadlineSeconds(LlmAdapter provider, ExecutionBudget budget) {
+        int configuredProviderTimeout = providerConfigs
+                .getOrDefault(provider.providerName(), new CouncilProperties.ProviderConfig())
+                .getTimeoutSeconds();
+        long configured = positiveOrDefault(configuredProviderTimeout, budget.perProviderDeadlineSeconds());
+        return Math.max(1L, Math.min(budget.perProviderDeadlineSeconds(), configured));
+    }
+
+    private double expectedProviderCeiling(String providerName) {
+        CouncilProperties.ProviderConfig config = providerConfigs
+                .getOrDefault(providerName, new CouncilProperties.ProviderConfig());
+        return Math.min(0.98, Math.max(0.50, config.getReliability() + 0.08));
     }
 
     private DraftResult executeDraftProvider(LlmAdapter provider, DraftRequest request) {
@@ -516,6 +717,22 @@ public class ReasoningOrchestrator {
     private ReviewPhaseResult runReviewPhases(String traceId,
                                               String userQuery,
                                               List<DraftResult> successfulDrafts) {
+        return runReviewPhases(traceId, userQuery, successfulDrafts,
+                executionBudget(TaskType.GENERAL_REASONING, System.nanoTime()));
+    }
+
+    private ReviewPhaseResult runReviewPhases(String traceId,
+                                              String userQuery,
+                                              List<DraftResult> successfulDrafts,
+                                              ExecutionBudget budget) {
+        if (!budget.hasRemaining()) {
+            metrics.recordBudgetStop("review_skipped_request_budget_exhausted", budget.taskType().name());
+            metrics.recordDegradedMode("review_skipped_request_budget_exhausted");
+            return new ReviewPhaseResult(
+                    CriticResult.failure("unknown", "unknown", "Critic skipped: request budget exhausted", 0),
+                    VerifierBatchResult.passedFor(successfulDrafts));
+        }
+
         CriticRequest criticRequest = new CriticRequest(traceId, userQuery, successfulDrafts);
 
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -526,9 +743,11 @@ public class ReasoningOrchestrator {
                     executor.submit(() -> runVerifierPhase(traceId, userQuery, successfulDrafts));
 
             CriticResult critic = resolveCriticFuture(
-                    criticFuture, deadlineNanos(startNanos, criticTimeoutSeconds));
+                    criticFuture, Math.min(deadlineNanos(startNanos, criticTimeoutSeconds),
+                            budget.requestDeadlineNanos()));
             VerifierBatchResult verifier = resolveVerifierFuture(
-                    verifierFuture, deadlineNanos(startNanos, verifierTimeoutSeconds), successfulDrafts);
+                    verifierFuture, Math.min(deadlineNanos(startNanos, verifierTimeoutSeconds),
+                            budget.requestDeadlineNanos()), successfulDrafts);
 
             return new ReviewPhaseResult(critic, verifier);
         } finally {
@@ -606,13 +825,30 @@ public class ReasoningOrchestrator {
     }
 
     SynthesisResult runSynthesisPhase(SynthesisRequest request) {
+        return runSynthesisPhase(request,
+                executionBudget(TaskType.GENERAL_REASONING, System.nanoTime()));
+    }
+
+    SynthesisResult runSynthesisPhase(SynthesisRequest request, ExecutionBudget budget) {
+        if (!budget.hasRemaining()) {
+            metrics.recordBudgetStop("synthesis_skipped_request_budget_exhausted", budget.taskType().name());
+            metrics.recordDegradedMode("synthesis_skipped_request_budget_exhausted");
+            return SynthesisResult.failure("none", "none",
+                    "Synthesis skipped: request budget exhausted", 0);
+        }
+
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         Future<SynthesisResult> future = executor.submit(() -> executeSynthesisPhase(request));
         try {
-            return future.get(synthesisTimeoutSeconds, TimeUnit.SECONDS);
+            long timeoutMillis = Math.min(
+                    TimeUnit.SECONDS.toMillis(synthesisTimeoutSeconds),
+                    budget.remainingMillis());
+            return future.get(Math.max(1L, timeoutMillis), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             future.cancel(true);
-            log.warn("[orchestrator] Synthesis timed out after {}s", synthesisTimeoutSeconds);
+            log.warn("[orchestrator] Synthesis timed out after {}ms", budget.remainingMillis());
+            metrics.recordBudgetStop("synthesis_deadline_exceeded", budget.taskType().name());
+            metrics.recordDegradedMode("synthesis_deadline_exceeded");
             return SynthesisResult.failure("none", "none", "Synthesis timed out", 0);
         } catch (InterruptedException e) {
             future.cancel(true);
@@ -668,6 +904,51 @@ public class ReasoningOrchestrator {
         return value > 0 ? value : defaultValue;
     }
 
+    private double positiveDoubleOrDefault(double value, double defaultValue) {
+        return value > 0.0 ? value : defaultValue;
+    }
+
+    private ExecutionBudget executionBudget(TaskType taskType, long startNanos) {
+        TaskType effectiveTaskType = taskType == null ? TaskType.GENERAL_REASONING : taskType;
+        CouncilProperties.TaskBudgetConfig taskBudget = taskBudget(effectiveTaskType);
+
+        long requestSeconds = positiveOrDefault(
+                taskBudget == null ? 0 : taskBudget.getRequestTimeoutSeconds(),
+                requestTimeoutSeconds);
+        long draftSeconds = positiveOrDefault(
+                taskBudget == null ? 0 : taskBudget.getDraftTimeoutSeconds(),
+                draftTimeoutSeconds);
+        long providerSeconds = positiveOrDefault(
+                taskBudget == null ? 0 : taskBudget.getPerProviderDeadlineSeconds(),
+                perProviderDeadlineSeconds);
+        double threshold = positiveDoubleOrDefault(
+                taskBudget == null ? 0.0 : taskBudget.getEarlyStopQualityThreshold(),
+                earlyStopQualityThreshold);
+
+        return new ExecutionBudget(
+                effectiveTaskType,
+                startNanos + TimeUnit.SECONDS.toNanos(requestSeconds),
+                requestSeconds,
+                draftSeconds,
+                providerSeconds,
+                CouncilUtils.clamp01(threshold),
+                earlyStopEnabled,
+                earlyStopMinImprovement);
+    }
+
+    private CouncilProperties.TaskBudgetConfig taskBudget(TaskType taskType) {
+        Map<String, CouncilProperties.TaskBudgetConfig> budgets = orchestratorConfig.getTaskBudgets();
+        if (budgets == null || budgets.isEmpty()) {
+            return null;
+        }
+        return budgets.get(taskKey(taskType));
+    }
+
+    private String taskKey(TaskType taskType) {
+        TaskType effectiveTaskType = taskType == null ? TaskType.GENERAL_REASONING : taskType;
+        return effectiveTaskType.name().toLowerCase(Locale.ROOT).replace('_', '-');
+    }
+
     private long deadlineNanos(long startNanos, long timeoutSeconds) {
         return startNanos + TimeUnit.SECONDS.toNanos(timeoutSeconds);
     }
@@ -678,6 +959,18 @@ public class ReasoningOrchestrator {
             return 1L;
         }
         return Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
+    }
+
+    private long remainingMillisZero(long deadlineNanos) {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        if (remainingNanos <= 0L) {
+            return 0L;
+        }
+        return Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
+    }
+
+    private String formatScore(double value) {
+        return String.format(Locale.ROOT, "%.2f", value);
     }
 
     private String rootMessage(Throwable throwable) {
@@ -717,29 +1010,41 @@ public class ReasoningOrchestrator {
                 "tps");
     }
 
-    private CalibratedFinalQuality calibrateFinalQuality(String answer,
+    private CalibratedFinalQuality calibrateFinalQuality(String userQuery,
+                                                         String answer,
                                                          String summary,
                                                          double confidence,
                                                          ResearchPack researchPack) {
+        InvariantCriticResult invariantResult =
+                invariantViolationCritic.evaluate(userQuery, answer, researchPack);
         ProductionConsistencyCalibrator.QualityScore productionScore =
-                ProductionConsistencyCalibrator.qualityScore(answer, summary, confidence);
+                ProductionConsistencyCalibrator.qualityScore(answer, summary, confidence, invariantResult);
         double score = productionScore.score();
         Map<String, Double> dimensions = new LinkedHashMap<>(productionScore.dimensions());
         List<String> reasons = new ArrayList<>(productionScore.reasons());
 
         ResearchQualityCalibrator.QualityScore researchScore =
-                ResearchQualityCalibrator.qualityScore(answer, researchPack, score);
+                ResearchQualityCalibrator.qualityScore(answer, researchPack, score, invariantResult);
         if (researchScore.applied()) {
             dimensions.putAll(researchScore.dimensions());
             reasons.addAll(researchScore.reasons());
             score = Math.min(score, researchScore.score());
         }
 
-        if (productionScore.applied() || researchScore.applied()) {
-            log.info("[orchestrator] Final quality calibrated from {} to {} by quality rubrics: dimensions={}, reasons={}",
-                    confidence, score, dimensions, reasons);
+        if (invariantResult.evaluated()) {
+            dimensions.put("invariant_overall_cap", invariantResult.overallCap());
+            score = Math.min(score, invariantResult.overallCap());
         }
-        return new CalibratedFinalQuality(CouncilUtils.clamp01(score), Map.copyOf(dimensions), List.copyOf(reasons));
+
+        if (productionScore.applied() || researchScore.applied() || invariantResult.hasViolations()) {
+            log.info("[orchestrator] Final quality calibrated from {} to {} by quality rubrics: dimensions={}, reasons={}, invariantViolations={}",
+                    confidence, score, dimensions, reasons, invariantResult.violations().size());
+        }
+        return new CalibratedFinalQuality(
+                CouncilUtils.clamp01(score),
+                Map.copyOf(dimensions),
+                List.copyOf(reasons),
+                invariantResult);
     }
 
     private Double modelAgreement(List<JudgeRanking> rankings) {
@@ -773,9 +1078,43 @@ public class ReasoningOrchestrator {
     private record ReviewPhaseResult(CriticResult criticResult,
                                      VerifierBatchResult verifierBatchResult) {}
 
+    private record ExecutionBudget(TaskType taskType,
+                                   long requestDeadlineNanos,
+                                   long requestTimeoutSeconds,
+                                   long draftTimeoutSeconds,
+                                   long perProviderDeadlineSeconds,
+                                   double earlyStopQualityThreshold,
+                                   boolean earlyStopEnabled,
+                                   double earlyStopMinImprovement) {
+        boolean hasRemaining() {
+            return requestDeadlineNanos - System.nanoTime() > 0L;
+        }
+
+        long remainingMillis() {
+            long remainingNanos = requestDeadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                return 0L;
+            }
+            return Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
+        }
+    }
+
+    private record EarlyStopDecision(boolean stop,
+                                     String reason,
+                                     String metricReason) {
+        static EarlyStopDecision continueWaiting() {
+            return new EarlyStopDecision(false, "", "");
+        }
+
+        static EarlyStopDecision stop(String reason, String metricReason) {
+            return new EarlyStopDecision(true, reason, metricReason);
+        }
+    }
+
     private record CalibratedFinalQuality(double score,
                                           Map<String, Double> dimensions,
-                                          List<String> reasons) {}
+                                          List<String> reasons,
+                                          InvariantCriticResult invariants) {}
 
     private record DraftFilterResult(List<DraftResult> validDrafts,
                                      List<String> invalidProviders) {}

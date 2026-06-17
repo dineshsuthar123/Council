@@ -3,6 +3,7 @@ package com.council.api.controller;
 import com.council.api.dto.ErrorResponse;
 import com.council.api.dto.ProviderStatusResponse;
 import com.council.api.dto.ProviderScorecardResponse;
+import com.council.config.CouncilProperties;
 import com.council.metrics.ProviderScorecardService;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
@@ -37,15 +38,18 @@ public class HealthController {
     private final ProviderCircuitBreaker circuitBreaker;
     private final ProviderConcurrencyLimiter concurrencyLimiter;
     private final ProviderScorecardService scorecardService;
+    private final CouncilProperties properties;
 
     public HealthController(ProviderRegistry registry,
                             ProviderCircuitBreaker circuitBreaker,
                             ProviderConcurrencyLimiter concurrencyLimiter,
-                            ProviderScorecardService scorecardService) {
+                            ProviderScorecardService scorecardService,
+                            CouncilProperties properties) {
         this.registry = registry;
         this.circuitBreaker = circuitBreaker;
         this.concurrencyLimiter = concurrencyLimiter;
         this.scorecardService = scorecardService;
+        this.properties = properties;
     }
 
     /* ── GET /providers/status ─────────────────────────────────────── */
@@ -120,6 +124,7 @@ public class HealthController {
         body.put("status", available.isEmpty() ? "DEGRADED" : "UP");
         body.put("availableProviders", available.stream().map(LlmAdapter::providerName).toList());
         body.put("routingEnabled", registry.isRoutingEnabled());
+        body.put("research", researchAvailability());
 
         Map<String, Object> cooldowns = new LinkedHashMap<>();
         circuitBreaker.getAllStates().forEach((name, state) -> {
@@ -133,6 +138,29 @@ public class HealthController {
         body.put("cooldownStates", cooldowns);
 
         return ResponseEntity.ok(body);
+    }
+
+    private Map<String, Object> researchAvailability() {
+        CouncilProperties.ResearchConfig research = properties.getResearch();
+        boolean enabled = research.isEnabled();
+        boolean configured = research.getApiKey() != null && !research.getApiKey().isBlank();
+        boolean available = enabled && configured;
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("enabled", enabled);
+        body.put("provider", research.getProvider());
+        body.put("configured", configured);
+        body.put("available", available);
+        body.put("timeoutSeconds", research.getTimeoutSeconds());
+        body.put("maxResults", research.getMaxResults());
+        if (!enabled) {
+            body.put("reason", "Research mode is disabled");
+        } else if (!configured) {
+            body.put("reason", "TAVILY_API_KEY is not configured");
+        } else {
+            body.put("reason", "Research provider is configured");
+        }
+        return body;
     }
 
     /* ── GET /metrics ───────────────────────────────────────────────── */

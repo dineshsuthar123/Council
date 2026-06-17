@@ -23,6 +23,7 @@ public record TraceResponse(
         Double modelAgreement,
         @JsonRawValue String dimensions,
         @JsonRawValue String researchContext,
+        @JsonRawValue String invariantFindings,
         String judgeReason,
         List<String> usedProviders,
         List<String> failedProviders,

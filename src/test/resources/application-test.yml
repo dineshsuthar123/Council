@@ -134,5 +134,8 @@ council:
     critic-timeout-seconds: 10
     verifier-timeout-seconds: 5
     synthesis-timeout-seconds: 5
+    request-timeout-seconds: 20
+    per-provider-deadline-seconds: 5
+    early-stop-enabled: false
   routing:
     enabled: false

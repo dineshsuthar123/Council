@@ -57,6 +57,9 @@ public class TraceEntity {
     @Column(name = "research_context", columnDefinition = "TEXT")
     private String researchContext;
 
+    @Column(name = "invariant_findings", columnDefinition = "TEXT")
+    private String invariantFindings;
+
     @Column(name = "judge_reason", columnDefinition = "TEXT")
     private String judgeReason;
 
@@ -117,6 +120,8 @@ public class TraceEntity {
     public void setScoreDimensions(String scoreDimensions) { this.scoreDimensions = scoreDimensions; }
     public String getResearchContext() { return researchContext; }
     public void setResearchContext(String researchContext) { this.researchContext = researchContext; }
+    public String getInvariantFindings() { return invariantFindings; }
+    public void setInvariantFindings(String invariantFindings) { this.invariantFindings = invariantFindings; }
     public String getJudgeReason() { return judgeReason; }
     public void setJudgeReason(String judgeReason) { this.judgeReason = judgeReason; }
     public String getUsedProviders() { return usedProviders; }

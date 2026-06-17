@@ -139,7 +139,10 @@ class ReasonControllerIntegrationTest {
     void healthReturnsStatus() throws Exception {
         mockMvc.perform(get("/api/v1/health"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").exists());
+                .andExpect(jsonPath("$.status").exists())
+                .andExpect(jsonPath("$.research.enabled").value(true))
+                .andExpect(jsonPath("$.research.available").value(false))
+                .andExpect(jsonPath("$.research.reason").value("TAVILY_API_KEY is not configured"));
     }
 
     @Test
@@ -304,7 +307,9 @@ class ReasonControllerIntegrationTest {
     void adminCanAccessActuatorHealth() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").exists());
+                .andExpect(jsonPath("$.status").exists())
+                .andExpect(jsonPath("$.components.research.details.available").value(false))
+                .andExpect(jsonPath("$.components.research.details.reason").value("TAVILY_API_KEY is not configured"));
     }
 }
 

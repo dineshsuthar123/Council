@@ -68,6 +68,7 @@ const els = {
   health: document.querySelector("#system-status"),
   routing: document.querySelector("#routing-mode"),
   available: document.querySelector("#available-count"),
+  research: document.querySelector("#research-mode"),
   toast: document.querySelector("#toast-region")
 };
 
@@ -351,6 +352,7 @@ function renderAnswer(response) {
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
     ${dimensionGrid(response.dimensions)}
+    ${invariantPanel(response.invariants)}
     ${researchPanel(response.research)}
     <div class="answer-body">${formatAnswer(response.finalAnswer || "No final answer returned.")}</div>
   `;
@@ -374,10 +376,16 @@ async function loadHealth() {
     els.health.innerHTML = `<span class="status-dot ${statusClass}"></span><span>${escapeHtml(status)}</span>`;
     els.routing.textContent = health.routingEnabled ? "Enabled" : "Classic";
     els.available.textContent = Array.isArray(health.availableProviders) ? health.availableProviders.length : "--";
+    els.research.textContent = health.research?.available
+      ? "Ready"
+      : health.research?.enabled
+        ? "No key"
+        : "Off";
   } catch (error) {
     els.health.innerHTML = `<span class="status-dot down"></span><span>Offline</span>`;
     els.routing.textContent = "--";
     els.available.textContent = "--";
+    els.research.textContent = "--";
   }
 }
 
@@ -546,6 +554,7 @@ function renderTraceDebug(debug) {
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
     ${dimensionGrid(debug.dimensions)}
+    ${invariantPanel(debug.invariantFindings)}
     ${researchPanel(debug.researchContext)}
     ${providerOutcomePanel(debug.draftResults)}
     <div class="answer-body">
@@ -790,7 +799,11 @@ function dimensionGrid(dimensions) {
     ["evidence_coverage", "Evidence coverage"],
     ["unsupported_claim_penalty", "Supported claims"],
     ["conflict_handling", "Conflict handling"],
-    ["answer_completeness", "Completeness"]
+    ["answer_completeness", "Completeness"],
+    ["invariant_payment_transfer", "Payment invariants"],
+    ["invariant_url_shortener", "URL invariants"],
+    ["invariant_research_evidence", "Research invariants"],
+    ["invariant_overall_cap", "Invariant cap"]
   ];
 
   const rows = order
@@ -823,6 +836,40 @@ function dimensionGrid(dimensions) {
         <small>Weighted rubric behind answer quality</small>
       </div>
       <div class="dimension-grid">${rows}</div>
+    </div>
+  `;
+}
+
+function invariantPanel(result) {
+  if (!result || !result.evaluated) {
+    return "";
+  }
+
+  const violations = Array.isArray(result.violations) ? result.violations : [];
+  const checked = Array.isArray(result.checked) ? result.checked : [];
+  const cap = result.overallCap == null ? 1 : scoreValue(result.overallCap);
+  const statusClass = violations.length ? "degraded" : "up";
+  const statusText = violations.length
+    ? `${violations.length} violation${violations.length === 1 ? "" : "s"}`
+    : `${checked.length} invariants clean`;
+  const rows = violations.map((violation) => `
+    <article class="invariant-row">
+      <div>
+        <strong>${escapeHtml(violation.invariantId || violation.title || "Invariant violation")}</strong>
+        <p>${escapeHtml(violation.evidence || violation.title || "Invariant failed.")}</p>
+        ${violation.remediation ? `<small>${escapeHtml(violation.remediation)}</small>` : ""}
+      </div>
+      <span>${Math.round(scoreValue(violation.scoreCap) * 100)}%</span>
+    </article>
+  `).join("");
+
+  return `
+    <div class="invariant-panel" aria-label="Invariant critic findings">
+      <div class="dimension-heading">
+        <span>Invariant critic</span>
+        <small><span class="status-dot ${statusClass}"></span>${escapeHtml(statusText)} - cap ${Math.round(cap * 100)}%</small>
+      </div>
+      ${rows || `<div class="empty-inline">No invariant violations detected.</div>`}
     </div>
   `;
 }

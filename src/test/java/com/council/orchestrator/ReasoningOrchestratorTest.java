@@ -7,6 +7,7 @@ import com.council.events.PipelineEventBroadcaster;
 import com.council.judge.DeterministicJudge;
 import com.council.judge.PromptClassifier;
 import com.council.judge.SpecificityScorer;
+import com.council.judge.invariant.InvariantLibrary;
 import com.council.metrics.OrchestrationMetrics;
 import com.council.model.*;
 import com.council.provider.LlmAdapter;
@@ -189,6 +190,10 @@ class ReasoningOrchestratorTest {
         assertEquals(0.0, response.confidence());
         assertEquals(List.of("gemini", "deepseek"), response.failedProviders());
         assertTrue(response.usedProviders().isEmpty());
+        verify(traceService).persistAsync(anyString(), eq("Test query"),
+                argThat(drafts -> drafts.size() == 2
+                        && drafts.stream().allMatch(d -> d.errorMessage() != null && !d.errorMessage().isBlank())),
+                any(), any(), any(), anyLong());
     }
 
     /* ── No providers available ────────────────────────────────────── */
@@ -358,11 +363,17 @@ class ReasoningOrchestratorTest {
 
         FinalResponse response = orchestrator.reason(urlShortenerIncidentQuery());
 
-        assertTrue(response.answerQuality() >= 0.82 && response.answerQuality() <= 0.88);
+        assertEquals(0.75, response.answerQuality(), 0.001,
+                "Invariant cap should bound active-cache-before-tombstone pseudocode");
         assertEquals(response.answerQuality(), response.confidence(), 0.001);
         assertNotNull(response.winnerConfidence());
         assertNotNull(response.modelAgreement());
         assertNotNull(response.dimensions());
+        assertNotNull(response.invariants());
+        assertTrue(response.invariants().violations().stream()
+                .anyMatch(violation -> InvariantLibrary.URL_TOMBSTONE_PRECEDES_ACTIVE_CACHE
+                        .equals(violation.invariantId())));
+        assertEquals(0.75, response.dimensions().get("invariant_url_shortener"), 0.001);
         assertTrue(response.dimensions().get("pseudocode") <= 0.75,
                 "Active-cache-before-tombstone pseudocode should be visible in the dimension score");
         assertTrue(response.dimensions().get("deletion_safety") >= 0.90);
@@ -524,6 +535,62 @@ class ReasoningOrchestratorTest {
         assertTrue(elapsedMillis < 3_000, "draft phase should not wait for the sleeping provider");
     }
 
+    @Test
+    @DisplayName("Per-provider deadline fails slow provider before full draft budget expires")
+    void perProviderDeadlineFailsSlowProviderBeforeDraftBudget() {
+        ReasoningOrchestrator timeoutOrchestrator =
+                orchestratorWithDraftBudget(10, 10, 1, false, 0.90);
+        LlmAdapter slow = mock(LlmAdapter.class);
+        when(slow.providerName()).thenReturn("slow");
+        when(slow.modelName()).thenReturn("slow-model");
+        when(slow.isEnabled()).thenReturn(true);
+        when(slow.generateDraft(any())).thenAnswer(invocation -> {
+            Thread.sleep(10_000);
+            return DraftResult.success("slow", "slow-model",
+                    "late answer", "summary", List.of(), List.of(), 0.5, 10_000, "raw");
+        });
+
+        long start = System.nanoTime();
+        List<DraftResult> results = timeoutOrchestrator.runDraftPhase(
+                List.of(slow), DraftRequest.of("trace-provider-timeout", "slow query"));
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+        assertEquals(1, results.size());
+        assertFalse(results.getFirst().isSuccess());
+        assertTrue(results.getFirst().errorMessage().contains("per-provider deadline"));
+        assertTrue(elapsedMillis < 3_000, "provider deadline should beat the larger draft budget");
+    }
+
+    @Test
+    @DisplayName("Early stop cancels pending drafts when a sufficient answer arrives")
+    void earlyStopCancelsPendingDraftsWhenQualityIsSufficient() {
+        ReasoningOrchestrator earlyStopOrchestrator =
+                orchestratorWithDraftBudget(10, 10, 10, true, 0.80);
+        LlmAdapter fast = mockAdapter("fast", "fast-model",
+                DraftResult.success("fast", "fast-model",
+                        "fast strong answer", "summary", List.of(), List.of(), 0.92, 100, "raw"));
+        LlmAdapter slow = mock(LlmAdapter.class);
+        when(slow.providerName()).thenReturn("slow");
+        when(slow.modelName()).thenReturn("slow-model");
+        when(slow.isEnabled()).thenReturn(true);
+        when(slow.generateDraft(any())).thenAnswer(invocation -> {
+            Thread.sleep(10_000);
+            return DraftResult.success("slow", "slow-model",
+                    "late answer", "summary", List.of(), List.of(), 0.95, 10_000, "raw");
+        });
+
+        long start = System.nanoTime();
+        List<DraftResult> results = earlyStopOrchestrator.runDraftPhase(
+                List.of(fast, slow), DraftRequest.of("trace-early-stop", "simple query"));
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+        assertEquals(2, results.size());
+        assertTrue(results.get(0).isSuccess());
+        assertFalse(results.get(1).isSuccess());
+        assertTrue(results.get(1).errorMessage().contains("early stop"));
+        assertTrue(elapsedMillis < 3_000, "early stop should cancel the pending slow provider");
+    }
+
     private LlmAdapter mockAdapter(String name, String model, DraftResult result) {
         LlmAdapter adapter = mock(LlmAdapter.class);
         when(adapter.providerName()).thenReturn(name);
@@ -542,6 +609,14 @@ class ReasoningOrchestratorTest {
     }
 
     private ReasoningOrchestrator orchestratorWithDraftTimeoutSeconds(int timeoutSeconds) {
+        return orchestratorWithDraftBudget(timeoutSeconds, timeoutSeconds, timeoutSeconds, false, 0.90);
+    }
+
+    private ReasoningOrchestrator orchestratorWithDraftBudget(int draftTimeoutSeconds,
+                                                              int requestTimeoutSeconds,
+                                                              int perProviderDeadlineSeconds,
+                                                              boolean earlyStopEnabled,
+                                                              double earlyStopThreshold) {
         ProviderRegistry localRegistry = mock(ProviderRegistry.class);
         CriticEngine localCritic = mock(CriticEngine.class);
         VerifierEngine localVerifier = mock(VerifierEngine.class);
@@ -551,7 +626,11 @@ class ReasoningOrchestratorTest {
         ProviderSelectionStrategy localSelectionStrategy = mock(ProviderSelectionStrategy.class);
 
         CouncilProperties props = new CouncilProperties();
-        props.getOrchestrator().setDraftTimeoutSeconds(timeoutSeconds);
+        props.getOrchestrator().setDraftTimeoutSeconds(draftTimeoutSeconds);
+        props.getOrchestrator().setRequestTimeoutSeconds(requestTimeoutSeconds);
+        props.getOrchestrator().setPerProviderDeadlineSeconds(perProviderDeadlineSeconds);
+        props.getOrchestrator().setEarlyStopEnabled(earlyStopEnabled);
+        props.getOrchestrator().setEarlyStopQualityThreshold(earlyStopThreshold);
         props.getOrchestrator().setCriticTimeoutSeconds(1);
         props.getOrchestrator().setVerifierTimeoutSeconds(1);
         props.getOrchestrator().setSynthesisTimeoutSeconds(1);

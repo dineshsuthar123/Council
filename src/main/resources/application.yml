@@ -192,6 +192,42 @@ council:
     critic-timeout-seconds: 120
     verifier-timeout-seconds: 30
     synthesis-timeout-seconds: 60
+    request-timeout-seconds: 90
+    per-provider-deadline-seconds: 30
+    early-stop-enabled: true
+    early-stop-quality-threshold: 0.88
+    early-stop-min-improvement: 0.06
+    task-budgets:
+      general-reasoning:
+        request-timeout-seconds: 45
+        draft-timeout-seconds: 18
+        per-provider-deadline-seconds: 12
+        max-draft-providers: 2
+        early-stop-quality-threshold: 0.84
+      coding:
+        request-timeout-seconds: 60
+        draft-timeout-seconds: 22
+        per-provider-deadline-seconds: 15
+        max-draft-providers: 2
+        early-stop-quality-threshold: 0.86
+      debugging:
+        request-timeout-seconds: 70
+        draft-timeout-seconds: 25
+        per-provider-deadline-seconds: 18
+        max-draft-providers: 3
+        early-stop-quality-threshold: 0.86
+      system-design:
+        request-timeout-seconds: 90
+        draft-timeout-seconds: 30
+        per-provider-deadline-seconds: 22
+        max-draft-providers: 3
+        early-stop-quality-threshold: 0.88
+      backend-architecture:
+        request-timeout-seconds: 90
+        draft-timeout-seconds: 30
+        per-provider-deadline-seconds: 22
+        max-draft-providers: 3
+        early-stop-quality-threshold: 0.88
 
   # ── Intelligent Routing ──
   research:
