@@ -239,6 +239,14 @@ council:
     max-results: 5
     max-snippet-chars: 700
 
+  trace:
+    redaction-enabled: true
+    retention-days: 30
+    raw-debug-retention-days: 7
+    export-outbox-enabled: true
+    export-payload-max-chars: 12000
+    export-retention-days: 14
+
   routing:
     enabled: true
     max-draft-providers: 3

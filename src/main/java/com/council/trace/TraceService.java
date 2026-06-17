@@ -7,10 +7,12 @@ import com.council.api.dto.TraceSummaryResponse;
 import com.council.model.CriticResult;
 import com.council.model.DraftResult;
 import com.council.model.JudgeResult;
+import com.council.trace.export.TraceExportOutboxService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,10 +33,19 @@ public class TraceService {
 
     private final TraceRepository repository;
     private final TraceMapper traceMapper;
+    private final TraceExportOutboxService exportOutboxService;
 
     public TraceService(TraceRepository repository, TraceMapper traceMapper) {
+        this(repository, traceMapper, null);
+    }
+
+    @Autowired
+    public TraceService(TraceRepository repository,
+                        TraceMapper traceMapper,
+                        TraceExportOutboxService exportOutboxService) {
         this.repository = repository;
         this.traceMapper = traceMapper;
+        this.exportOutboxService = exportOutboxService;
     }
 
     /**
@@ -57,6 +68,13 @@ public class TraceService {
             entity.setCompletedAt(Instant.now());
 
             repository.save(entity);
+            if (exportOutboxService != null) {
+                try {
+                    exportOutboxService.enqueue(entity);
+                } catch (Exception exportError) {
+                    log.warn("[trace] Export outbox failed for trace {}: {}", traceId, exportError.getMessage());
+                }
+            }
             log.debug("[trace] Persisted trace {}", traceId);
 
         } catch (Exception e) {

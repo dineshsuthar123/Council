@@ -10,6 +10,7 @@ import com.council.model.DraftResult;
 import com.council.model.JudgeResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -28,9 +29,16 @@ public class TraceMapper {
     private static final Logger log = LoggerFactory.getLogger(TraceMapper.class);
 
     private final ObjectMapper mapper;
+    private final TraceRedactor redactor;
 
     public TraceMapper(ObjectMapper mapper) {
+        this(mapper, new TraceRedactor());
+    }
+
+    @Autowired
+    public TraceMapper(ObjectMapper mapper, TraceRedactor redactor) {
         this.mapper = mapper;
+        this.redactor = redactor;
     }
 
     /* ── Entity population ─────────────────────────────────────────── */
@@ -50,7 +58,7 @@ public class TraceMapper {
         entity.setJudgeResult(toJson(judgeResult));
 
         if (response != null) {
-            entity.setFinalAnswer(response.finalAnswer());
+            entity.setFinalAnswer(redactor.redact(response.finalAnswer()));
             entity.setFinalConfidence(response.confidence());
             entity.setAnswerQuality(response.answerQuality() == null ? response.confidence() : response.answerQuality());
             entity.setWinnerConfidence(response.winnerConfidence());
@@ -58,7 +66,7 @@ public class TraceMapper {
             entity.setScoreDimensions(toJson(response.dimensions()));
             entity.setResearchContext(toJson(response.research()));
             entity.setInvariantFindings(toJson(response.invariants()));
-            entity.setJudgeReason(response.judgeReason());
+            entity.setJudgeReason(redactor.redact(response.judgeReason()));
             entity.setUsedProviders(String.join(",", response.usedProviders()));
             entity.setFailedProviders(String.join(",", response.failedProviders()));
             entity.setStatus(response.finalAnswer() != null ? TraceStatus.COMPLETED : TraceStatus.FAILED);
@@ -153,7 +161,7 @@ public class TraceMapper {
         Map<String, String> raw = new LinkedHashMap<>();
         for (DraftResult d : drafts) {
             if (d.rawResponse() != null) {
-                raw.put(d.provider(), d.rawResponse());
+                raw.put(d.provider(), redactor.redact(d.rawResponse()));
             }
         }
         return raw;
@@ -167,7 +175,7 @@ public class TraceMapper {
     String toJson(Object obj) {
         if (obj == null) return null;
         try {
-            return mapper.writeValueAsString(obj);
+            return redactor.redact(mapper.writeValueAsString(obj));
         } catch (JsonProcessingException e) {
             log.warn("[trace] JSON serialization failed: {}", e.getMessage());
             return null;

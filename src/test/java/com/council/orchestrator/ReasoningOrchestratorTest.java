@@ -320,7 +320,9 @@ class ReasoningOrchestratorTest {
 
         FinalResponse response = orchestrator.reason(urlShortenerIncidentQuery());
 
-        assertEquals(synthesizedAnswer, response.finalAnswer());
+        assertTrue(response.finalAnswer().contains("### Decision"));
+        assertTrue(response.finalAnswer().contains("### Concrete Algorithm"));
+        assertTrue(response.finalAnswer().contains("Use a cache-aside lease mechanism"));
         assertTrue(response.confidence() <= 0.55,
                 "Final response confidence must be capped after unsafe synthesis, not restored to 0.95");
     }

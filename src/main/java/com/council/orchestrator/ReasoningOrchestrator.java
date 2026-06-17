@@ -398,7 +398,7 @@ public class ReasoningOrchestrator {
             if (FinalAnswerCompletenessGuard.hasDanglingPseudocodePromise(finalAnswer)) {
                 log.warn("[orchestrator] Final answer promised pseudocode but did not include concrete control flow");
             }
-            finalAnswer = FinalAnswerCompletenessGuard.repair(userQuery, finalAnswer);
+            finalAnswer = FinalAnswerCompletenessGuard.compose(userQuery, finalAnswer, researchPack);
             CalibratedFinalQuality finalQuality =
                     calibrateFinalQuality(userQuery, finalAnswer, null, finalConfidence, researchPack);
             finalConfidence = finalQuality.score();

@@ -21,6 +21,7 @@ public class CouncilProperties {
     private RoutingConfig routing = new RoutingConfig();
     private DesignAgentConfig designAgent = new DesignAgentConfig();
     private ResearchConfig research = new ResearchConfig();
+    private TraceConfig trace = new TraceConfig();
 
     public Map<String, ProviderConfig> getProviders() { return providers; }
     public void setProviders(Map<String, ProviderConfig> providers) { this.providers = providers; }
@@ -36,6 +37,8 @@ public class CouncilProperties {
     public void setDesignAgent(DesignAgentConfig designAgent) { this.designAgent = designAgent; }
     public ResearchConfig getResearch() { return research; }
     public void setResearch(ResearchConfig research) { this.research = research; }
+    public TraceConfig getTrace() { return trace; }
+    public void setTrace(TraceConfig trace) { this.trace = trace; }
 
     public static class ProviderConfig {
         private boolean enabled = true;
@@ -193,6 +196,28 @@ public class CouncilProperties {
         public void setMaxResults(int maxResults) { this.maxResults = maxResults; }
         public int getMaxSnippetChars() { return maxSnippetChars; }
         public void setMaxSnippetChars(int maxSnippetChars) { this.maxSnippetChars = maxSnippetChars; }
+    }
+
+    public static class TraceConfig {
+        private boolean redactionEnabled = true;
+        private int retentionDays = 30;
+        private int rawDebugRetentionDays = 7;
+        private boolean exportOutboxEnabled = true;
+        private int exportPayloadMaxChars = 12000;
+        private int exportRetentionDays = 14;
+
+        public boolean isRedactionEnabled() { return redactionEnabled; }
+        public void setRedactionEnabled(boolean redactionEnabled) { this.redactionEnabled = redactionEnabled; }
+        public int getRetentionDays() { return retentionDays; }
+        public void setRetentionDays(int retentionDays) { this.retentionDays = retentionDays; }
+        public int getRawDebugRetentionDays() { return rawDebugRetentionDays; }
+        public void setRawDebugRetentionDays(int rawDebugRetentionDays) { this.rawDebugRetentionDays = rawDebugRetentionDays; }
+        public boolean isExportOutboxEnabled() { return exportOutboxEnabled; }
+        public void setExportOutboxEnabled(boolean exportOutboxEnabled) { this.exportOutboxEnabled = exportOutboxEnabled; }
+        public int getExportPayloadMaxChars() { return exportPayloadMaxChars; }
+        public void setExportPayloadMaxChars(int exportPayloadMaxChars) { this.exportPayloadMaxChars = exportPayloadMaxChars; }
+        public int getExportRetentionDays() { return exportRetentionDays; }
+        public void setExportRetentionDays(int exportRetentionDays) { this.exportRetentionDays = exportRetentionDays; }
     }
 
     /**

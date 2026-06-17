@@ -128,6 +128,29 @@ class TraceMapperTest {
     }
 
     @Test
+    @DisplayName("populateEntity redacts raw provider output and final answer before persistence")
+    void populateEntity_redactsSensitiveArtifacts() {
+        TraceEntity entity = new TraceEntity(UUID.randomUUID(), "query");
+        List<DraftResult> drafts = List.of(
+                DraftResult.success("groq", "m",
+                        "answer", "summary", List.of(), List.of(), 0.8, 100,
+                        "Authorization: Bearer sk-secret-abcdef1234567890 user owner@example.com")
+        );
+        FinalResponse response = new FinalResponse("trace-1",
+                "final answer mentions apiKey=sk-secret-abcdef1234567890",
+                "judge reason", List.of("groq"), List.of(), 0.8);
+
+        mapper.populateEntity(entity, drafts, null, null, response, 250);
+
+        assertTrue(entity.getRawResponses().contains("[REDACTED]"));
+        assertTrue(entity.getRawResponses().contains("[REDACTED_EMAIL]"));
+        assertTrue(entity.getFinalAnswer().contains("[REDACTED]"));
+        assertFalse(entity.getRawResponses().contains("sk-secret-abcdef1234567890"));
+        assertFalse(entity.getRawResponses().contains("owner@example.com"));
+        assertFalse(entity.getFinalAnswer().contains("sk-secret-abcdef1234567890"));
+    }
+
+    @Test
     @DisplayName("toDebugResponse maps entity to TraceDebugResponse with correct counts")
     void toDebugResponse_mapsCorrectly() {
         TraceEntity entity = new TraceEntity(UUID.randomUUID(), "debug query");
