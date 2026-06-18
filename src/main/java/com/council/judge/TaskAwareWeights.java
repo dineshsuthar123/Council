@@ -35,6 +35,9 @@ public record TaskAwareWeights(
             TaskType.CODING,
             new TaskAwareWeights(0.40, 0.25, 0.25, 0.05, 0.05),
 
+            TaskType.RESEARCH_REQUIRED,
+            new TaskAwareWeights(0.25, 0.20, 0.25, 0.20, 0.10),
+
             TaskType.GENERAL_REASONING,
             new TaskAwareWeights(0.35, 0.25, 0.25, 0.10, 0.05)
     );

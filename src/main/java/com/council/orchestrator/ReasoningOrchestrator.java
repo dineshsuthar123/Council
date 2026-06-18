@@ -189,6 +189,8 @@ public class ReasoningOrchestrator {
                         startTime,
                         Map.of("researchRequired", true,
                                 "sourceCount", researchPack.sources().size(),
+                                "originSummary", researchPack.originSummary(),
+                                "warnings", researchPack.warnings(),
                                 "queries", researchPack.queries()));
             }
 

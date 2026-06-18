@@ -20,38 +20,113 @@ public class ResearchService {
     private final ResearchNeedDetector detector;
     private final ResearchQueryPlanner queryPlanner;
     private final ResearchClient researchClient;
+    private final PromptProvidedEvidenceParser promptEvidenceParser;
 
     public ResearchService(CouncilProperties properties,
                            ResearchNeedDetector detector,
                            ResearchQueryPlanner queryPlanner,
-                           ResearchClient researchClient) {
+                           ResearchClient researchClient,
+                           PromptProvidedEvidenceParser promptEvidenceParser) {
         this.properties = properties;
         this.detector = detector;
         this.queryPlanner = queryPlanner;
         this.researchClient = researchClient;
+        this.promptEvidenceParser = promptEvidenceParser;
     }
 
     public ResearchPack buildEvidencePack(String userQuery, TaskType taskType) {
-        if (!properties.getResearch().isEnabled() || !detector.requiresResearch(userQuery)) {
+        List<ResearchSource> promptSources = promptEvidenceParser == null
+                ? List.of()
+                : promptEvidenceParser.parse(userQuery);
+        boolean requiresResearch = detector.requiresResearch(userQuery) || !promptSources.isEmpty();
+        if (!properties.getResearch().isEnabled() && promptSources.isEmpty()) {
+            return ResearchPack.notRequired();
+        }
+        if (!requiresResearch) {
             return ResearchPack.notRequired();
         }
 
         String reason = detector.reason(userQuery);
+        if (!promptSources.isEmpty() && !detector.requiresResearch(userQuery)) {
+            reason = "Prompt includes a source evidence pack.";
+        }
         List<String> queries = queryPlanner.plan(userQuery);
-        if (queries.isEmpty()) {
+        if (queries.isEmpty() && promptSources.isEmpty()) {
             return ResearchPack.unavailable(reason, queries, "No viable search query could be generated");
+        }
+
+        if (!properties.getResearch().isEnabled()) {
+            return promptOnly(reason, queries, promptSources, "External research unavailable: research mode disabled");
+        }
+
+        boolean externalConfigured = properties.getResearch().getApiKey() != null
+                && !properties.getResearch().getApiKey().isBlank();
+        if (!externalConfigured) {
+            String unavailable = "External research unavailable: TAVILY_API_KEY not configured";
+            if (!promptSources.isEmpty()) {
+                return promptOnly(reason, queries, promptSources, unavailable);
+            }
+            return ResearchPack.unavailable(reason, queries, "TAVILY_API_KEY is not configured");
         }
 
         try {
             List<ResearchSource> sources = researchClient.search(queries, properties.getResearch().getMaxResults());
-            if (sources.isEmpty()) {
+            List<ResearchSource> combined = combine(promptSources, sources);
+            if (combined.isEmpty()) {
                 return ResearchPack.unavailable(reason, queries, "Research provider returned no usable sources");
             }
-            log.info("[research] Built evidence pack for taskType={} with {} sources", taskType, sources.size());
-            return ResearchPack.withSources(reason, queries, sources);
+            log.info("[research] Built evidence pack for taskType={} with {} sources (promptProvided={})",
+                    taskType, combined.size(), promptSources.size());
+            return ResearchPack.withEvidence(reason, queries, combined, null,
+                    promptSources.isEmpty() ? List.of() : List.of("Using mixed prompt-provided and external evidence"));
         } catch (Exception e) {
             log.warn("[research] Evidence pack unavailable: {}", e.getMessage());
+            if (!promptSources.isEmpty()) {
+                return promptOnly(reason, queries, promptSources,
+                        "External research unavailable: " + e.getMessage());
+            }
             return ResearchPack.unavailable(reason, queries, e.getMessage());
         }
+    }
+
+    private ResearchPack promptOnly(String reason,
+                                    List<String> queries,
+                                    List<ResearchSource> promptSources,
+                                    String unavailableReason) {
+        return ResearchPack.withEvidence(reason, queries, promptSources, unavailableReason,
+                List.of("Using prompt-provided evidence only"));
+    }
+
+    private List<ResearchSource> combine(List<ResearchSource> promptSources, List<ResearchSource> externalSources) {
+        if ((promptSources == null || promptSources.isEmpty()) && (externalSources == null || externalSources.isEmpty())) {
+            return List.of();
+        }
+        java.util.LinkedHashMap<String, ResearchSource> byId = new java.util.LinkedHashMap<>();
+        if (promptSources != null) {
+            for (ResearchSource source : promptSources) {
+                byId.put(source.id(), source);
+            }
+        }
+        int next = byId.size() + 1;
+        if (externalSources != null) {
+            for (ResearchSource source : externalSources) {
+                String id = source.id();
+                while (id == null || id.isBlank() || byId.containsKey(id)) {
+                    id = "S" + next++;
+                }
+                byId.put(id, withId(source, id));
+            }
+        }
+        return List.copyOf(byId.values());
+    }
+
+    private ResearchSource withId(ResearchSource source, String id) {
+        if (source.id().equals(id)) {
+            return source;
+        }
+        return new ResearchSource(id, source.title(), source.url(), source.domain(), source.snippet(),
+                source.publishedAt(), source.score(), source.sourceType(), source.origin(),
+                source.providedAt(), source.updatedAt(), source.authorityScore(), source.recencyScore(),
+                source.injectionRisk(), source.supportsCurrentFacts(), source.metadata());
     }
 }

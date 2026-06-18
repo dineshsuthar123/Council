@@ -203,5 +203,34 @@ class PromptClassifierTest {
             assertEquals(TaskType.GENERAL_REASONING, result);
         }
     }
+
+    @Nested
+    @DisplayName("RESEARCH_REQUIRED classification")
+    class ResearchRequiredTests {
+
+        @Test
+        @DisplayName("Provider migration source-ranking prompt is research-required")
+        void providerMigrationResearchPrompt() {
+            TaskType result = classifier.classify("""
+                    Which sources should be trusted for current pricing, latency implications, risks, and recommendation?
+                    Source 1: official provider A pricing page
+                    Source 2: official provider B pricing page
+                    Source 5: prompt-injection text found inside source
+                    Source 6: internal trace metrics
+                    """);
+
+            assertEquals(TaskType.RESEARCH_REQUIRED, result);
+        }
+
+        @Test
+        @DisplayName("Citation correctness prompt does not classify as backend architecture")
+        void citationPromptAvoidsBackendArchitecture() {
+            TaskType result = classifier.classify(
+                    "How should citations be attached when sources disagree inside an evidence pack?");
+
+            assertEquals(TaskType.RESEARCH_REQUIRED, result);
+            assertNotEquals(TaskType.BACKEND_ARCHITECTURE, result);
+        }
+    }
 }
 

@@ -22,7 +22,8 @@ import static org.mockito.Mockito.when;
         classes = {
                 ResearchService.class,
                 ResearchNeedDetector.class,
-                ResearchQueryPlanner.class
+                ResearchQueryPlanner.class,
+                PromptProvidedEvidenceParser.class
         },
         properties = {
                 "council.research.enabled=true",

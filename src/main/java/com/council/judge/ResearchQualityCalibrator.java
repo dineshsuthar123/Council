@@ -50,12 +50,13 @@ public final class ResearchQualityCalibrator {
                     List.of("external research was required but no sources were available"));
         }
 
-        Set<Integer> citations = citationIds(answer);
+        Set<String> citations = citationIds(answer);
+        Set<String> registeredIds = pack.sourceIds();
         int sourceCount = pack.sources().size();
-        long invalidCitations = citations.stream().filter(id -> id < 1 || id > sourceCount).count();
+        long invalidCitations = citations.stream().filter(id -> !registeredIds.contains(id)).count();
 
         dimensions.put("source_quality", scoreSourceQuality(pack.sources()));
-        dimensions.put("citation_accuracy", scoreCitationAccuracy(citations, invalidCitations, sourceCount));
+        dimensions.put("citation_accuracy", scoreCitationAccuracy(answer, pack, citations, invalidCitations, sourceCount));
         dimensions.put("recency", scoreRecency(pack));
         dimensions.put("evidence_coverage", scoreEvidenceCoverage(citations, sourceCount));
         dimensions.put("unsupported_claim_penalty", scoreSupportedness(answer, citations));
@@ -75,14 +76,18 @@ public final class ResearchQualityCalibrator {
             cap = 0.72;
         }
         if (invalidCitations > 0) {
-            cap = Math.min(cap, 0.62);
+            cap = Math.min(cap, 0.55);
+        }
+        if (citesHighInjectionRiskSource(answer, pack, citations)) {
+            cap = Math.min(cap, 0.45);
+        }
+        if (mentionsSourcesWithoutIds(answer, citations)) {
+            cap = Math.min(cap, 0.70);
         }
 
         return new QualityScore(CouncilUtils.clamp01(Math.min(weighted, cap)),
                 Map.copyOf(dimensions),
-                citations.isEmpty()
-                        ? List.of("research answer did not cite the provided evidence pack")
-                        : List.of());
+                reasons(answer, citations, invalidCitations, pack));
     }
 
     public static QualityScore qualityScore(String answer,
@@ -111,18 +116,35 @@ public final class ResearchQualityCalibrator {
         if (sources == null || sources.isEmpty()) {
             return 0.0;
         }
-        long https = sources.stream().filter(s -> s.url() != null && s.url().startsWith("https://")).count();
-        double countScore = sources.size() >= 4 ? 0.90 : sources.size() >= 2 ? 0.78 : 0.58;
-        double httpsScore = https == sources.size() ? 0.05 : 0.0;
-        return CouncilUtils.clamp01(countScore + httpsScore);
+        double authority = sources.stream().mapToDouble(ResearchSource::authorityScore).average().orElse(0.0);
+        double recency = sources.stream().mapToDouble(ResearchSource::recencyScore).average().orElse(0.0);
+        long officialOrTrace = sources.stream()
+                .filter(s -> s.sourceType() == com.council.research.SourceType.OFFICIAL_DOC || s.isInternalTrace())
+                .count();
+        long highRisk = sources.stream().filter(ResearchSource::hasHighInjectionRisk).count();
+        double countScore = sources.size() >= 6 ? 0.12 : sources.size() >= 3 ? 0.08 : 0.04;
+        double authorityBonus = officialOrTrace > 0 ? 0.08 : 0.0;
+        double injectionPenalty = highRisk > 0 ? 0.12 : 0.0;
+        return CouncilUtils.clamp01((authority * 0.62) + (recency * 0.25)
+                + countScore + authorityBonus - injectionPenalty);
     }
 
-    private static double scoreCitationAccuracy(Set<Integer> citations, long invalidCitations, int sourceCount) {
+    private static double scoreCitationAccuracy(String answer,
+                                                ResearchPack pack,
+                                                Set<String> citations,
+                                                long invalidCitations,
+                                                int sourceCount) {
         if (invalidCitations > 0) {
-            return 0.25;
+            return 0.20;
         }
         if (citations.isEmpty()) {
             return 0.30;
+        }
+        if (citesHighInjectionRiskSource(answer, pack, citations)) {
+            return 0.25;
+        }
+        if (officialPricingAvailableButNotCited(answer, pack, citations)) {
+            return 0.45;
         }
         int expected = Math.min(2, sourceCount);
         if (citations.size() >= expected) {
@@ -150,7 +172,7 @@ public final class ResearchQualityCalibrator {
         return 0.58;
     }
 
-    private static double scoreEvidenceCoverage(Set<Integer> citations, int sourceCount) {
+    private static double scoreEvidenceCoverage(Set<String> citations, int sourceCount) {
         if (citations.isEmpty()) {
             return 0.20;
         }
@@ -158,7 +180,7 @@ public final class ResearchQualityCalibrator {
         return CouncilUtils.clamp01(0.50 + (coverage * 0.45));
     }
 
-    private static double scoreSupportedness(String answer, Set<Integer> citations) {
+    private static double scoreSupportedness(String answer, Set<String> citations) {
         String text = normalize(answer);
         boolean makesCurrentClaim = containsAny(text, "latest", "currently", "as of", "today",
                 "now", "recent", "price", "release", "announced");
@@ -179,7 +201,7 @@ public final class ResearchQualityCalibrator {
         return 0.70;
     }
 
-    private static double scoreAnswerCompleteness(String answer, Set<Integer> citations) {
+    private static double scoreAnswerCompleteness(String answer, Set<String> citations) {
         String text = answer == null ? "" : answer.trim();
         if (text.length() >= 900 && !citations.isEmpty()) {
             return 0.88;
@@ -193,13 +215,65 @@ public final class ResearchQualityCalibrator {
         return 0.42;
     }
 
-    private static Set<Integer> citationIds(String answer) {
-        Set<Integer> ids = new HashSet<>();
+    private static Set<String> citationIds(String answer) {
+        Set<String> ids = new HashSet<>();
         Matcher matcher = CITATION.matcher(answer == null ? "" : answer);
         while (matcher.find()) {
-            ids.add(Integer.parseInt(matcher.group(1)));
+            ids.add("S" + matcher.group(1));
         }
         return ids;
+    }
+
+    private static boolean citesHighInjectionRiskSource(String answer, ResearchPack pack, Set<String> citations) {
+        if (pack == null || citations.isEmpty()) {
+            return false;
+        }
+        String text = normalize(answer);
+        boolean callsOutRisk = containsAny(text, "prompt-injection", "prompt injection", "hostile",
+                "untrusted", "do not obey", "not an instruction", "source data");
+        if (callsOutRisk) {
+            return false;
+        }
+        return pack.sources().stream()
+                .anyMatch(source -> citations.contains(source.id()) && source.hasHighInjectionRisk());
+    }
+
+    private static boolean officialPricingAvailableButNotCited(String answer,
+                                                               ResearchPack pack,
+                                                               Set<String> citations) {
+        String text = normalize(answer);
+        if (!containsAny(text, "price", "pricing", "cost", "cheaper", "migration", "recommend")) {
+            return false;
+        }
+        boolean officialAvailable = pack.sources().stream()
+                .anyMatch(source -> source.sourceType() == com.council.research.SourceType.OFFICIAL_DOC);
+        boolean officialCited = pack.sources().stream()
+                .anyMatch(source -> source.sourceType() == com.council.research.SourceType.OFFICIAL_DOC
+                        && citations.contains(source.id()));
+        return officialAvailable && !officialCited;
+    }
+
+    private static boolean mentionsSourcesWithoutIds(String answer, Set<String> citations) {
+        String text = normalize(answer);
+        return citations.isEmpty() && containsAny(text, "sources say", "the sources", "evidence says",
+                "according to sources", "provided sources");
+    }
+
+    private static List<String> reasons(String answer,
+                                        Set<String> citations,
+                                        long invalidCitations,
+                                        ResearchPack pack) {
+        List<String> reasons = new ArrayList<>();
+        if (citations.isEmpty()) {
+            reasons.add("research answer did not cite the provided evidence pack");
+        }
+        if (invalidCitations > 0) {
+            reasons.add("answer cited source IDs not present in the evidence registry");
+        }
+        if (citesHighInjectionRiskSource(answer, pack, citations)) {
+            reasons.add("answer cited a high prompt-injection-risk source");
+        }
+        return List.copyOf(reasons);
     }
 
     private static boolean containsAny(String haystack, String... needles) {

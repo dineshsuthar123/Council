@@ -25,7 +25,10 @@ public class ResearchNeedDetector {
                 "president", "prime minister", "ceo", "cfo", "cto",
                 "law", "regulation", "policy", "compliance", "standard",
                 "search the web", "browse", "look up", "find sources", "cite sources",
-                "with citations", "internet research", "online research");
+                "with citations", "internet research", "online research",
+                "source 1:", "source [1]:", "[s1]", "evidence pack", "citation correctness",
+                "which sources should be trusted", "sources disagree", "source-ranking",
+                "prompt-injection text found inside source", "official pricing page");
     }
 
     public String reason(String query) {
@@ -34,7 +37,8 @@ public class ResearchNeedDetector {
             return "Prompt asks for current or recent information.";
         }
         if (containsAny(text, "cite sources", "with citations", "find sources", "search the web",
-                "browse", "look up")) {
+                "browse", "look up", "source 1:", "[s1]", "evidence pack",
+                "citation correctness", "which sources should be trusted", "sources disagree")) {
             return "Prompt explicitly requests external sources.";
         }
         if (containsAny(text, "price", "stock", "crypto", "weather", "score", "schedule")) {
