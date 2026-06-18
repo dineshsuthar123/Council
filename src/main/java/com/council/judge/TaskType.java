@@ -18,6 +18,9 @@ public enum TaskType {
     /** Write-code / implement-function tasks */
     CODING,
 
+    /** Research, evidence-ranking, source-validation, or citation-grounded tasks */
+    RESEARCH_REQUIRED,
+
     /** Catch-all for non-technical or general prompts */
     GENERAL_REASONING
 }

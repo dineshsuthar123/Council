@@ -982,21 +982,33 @@ function researchPanel(pack) {
 
   const sources = Array.isArray(pack.sources) ? pack.sources : [];
   const queries = Array.isArray(pack.queries) ? pack.queries : [];
+  const warnings = Array.isArray(pack.warnings) ? pack.warnings : [];
+  const origin = pack.originSummary || (pack.hasPromptProvidedSources ? "Prompt-provided evidence" : "External research");
   const statusClass = sources.length ? "up" : "degraded";
-  const statusText = sources.length ? `${sources.length} sources attached` : "Research unavailable";
+  const statusText = sources.length ? `${sources.length} sources attached - ${origin}` : "Research unavailable";
   const sourceRows = sources.map((source) => {
     const href = safeExternalHref(source.url);
+    const risk = source.injectionRisk || "LOW";
+    const type = source.sourceType || "UNKNOWN";
+    const sourceOrigin = source.origin || "EXTERNAL_RESEARCH";
     return `
       <article class="source-row">
         <div>
           <strong>${escapeHtml(source.id || "S?")} - ${escapeHtml(source.title || source.url || "Untitled source")}</strong>
           <p>${escapeHtml(source.snippet || "No snippet captured.")}</p>
           <a href="${href}" target="_blank" rel="noreferrer">${escapeHtml(source.domain || source.url || "source")}</a>
+          <span>${escapeHtml(sourceOrigin)} · ${escapeHtml(type)} · injection ${escapeHtml(risk)}</span>
         </div>
-        <span>${escapeHtml(source.publishedAt || "date --")}</span>
+        <span>${escapeHtml(source.updatedAt || source.publishedAt || source.providedAt || "date --")}</span>
       </article>
     `;
   }).join("");
+  const warningRows = [
+    ...(warnings || []),
+    ...(pack.researchUnavailableReason && sources.length
+      ? [`${pack.researchUnavailableReason}. Prompt-provided sources were parsed and used.`]
+      : [])
+  ];
 
   return `
     <div class="research-panel" aria-label="Research evidence pack">
@@ -1005,6 +1017,7 @@ function researchPanel(pack) {
         <small><span class="status-dot ${statusClass}"></span>${escapeHtml(statusText)}</small>
       </div>
       ${sources.length ? "" : `<div class="source-warning">No source pack was available. Treat current-fact claims as unverified.</div>`}
+      ${warningRows.length ? `<div class="source-warning">${warningRows.map(escapeHtml).join(" ")}</div>` : ""}
       <p class="research-reason">${escapeHtml(pack.reason || "External research was requested.")}</p>
       ${queries.length ? `<div class="query-chips">${queries.map((query) => `<span>${escapeHtml(query)}</span>`).join("")}</div>` : ""}
       ${sources.length ? `<div class="source-list">${sourceRows}</div>` : `<div class="empty-inline">${escapeHtml(pack.errorMessage || "No source evidence was available for this run.")}</div>`}

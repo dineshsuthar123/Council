@@ -75,6 +75,16 @@ public class PromptClassifier {
                     "hash map", "tree", "graph algorithm",
                     "regex", "parse", "serialize", "deserialize",
                     "write a script", "implement a", "code review"
+            ),
+
+            TaskType.RESEARCH_REQUIRED, List.of(
+                    "which sources should be trusted", "how should citations be attached",
+                    "official pricing page", "source 1", "source 2", "source [1]",
+                    "[s1]", "prompt-injection text found inside source", "prompt injection",
+                    "current pricing", "latency implications", "evidence pack",
+                    "sources disagree", "source ranking", "source-ranking",
+                    "citation correctness", "citations", "cite", "source quality",
+                    "recommendation", "official provider", "old blog", "github issue"
             )
     );
 
@@ -99,6 +109,9 @@ public class PromptClassifier {
         }
 
         String lower = userQuery.toLowerCase(Locale.ROOT);
+        if (isResearchEvidencePrompt(lower)) {
+            return TaskType.RESEARCH_REQUIRED;
+        }
 
         TaskType best = TaskType.GENERAL_REASONING;
         int bestScore = 0;
@@ -138,11 +151,25 @@ public class PromptClassifier {
     private int tieBreakPriority(TaskType taskType) {
         return switch (taskType) {
             case SYSTEM_DESIGN -> 0;
-            case BACKEND_ARCHITECTURE -> 1;
-            case DEBUGGING -> 2;
-            case CODING -> 3;
+            case RESEARCH_REQUIRED -> 1;
+            case BACKEND_ARCHITECTURE -> 2;
+            case DEBUGGING -> 3;
+            case CODING -> 4;
             case GENERAL_REASONING -> 100;
         };
+    }
+
+    private boolean isResearchEvidencePrompt(String lower) {
+        boolean hasSourceBlocks = Pattern.compile("(?im)^\\s*(source\\s*\\[?\\d+]?|\\[s\\d+]|s\\d+)\\s*:")
+                .matcher(lower)
+                .find();
+        return hasSourceBlocks
+                || (lower.contains("evidence pack") && lower.contains("citation"))
+                || lower.contains("which sources should be trusted")
+                || lower.contains("citation correctness")
+                || lower.contains("sources disagree")
+                || lower.contains("prompt-injection text found inside source")
+                || (lower.contains("official pricing page") && lower.contains("recommendation"));
     }
 }
 

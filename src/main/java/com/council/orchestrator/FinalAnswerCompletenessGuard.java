@@ -232,7 +232,7 @@ final class FinalAnswerCompletenessGuard {
 
     private static String researchTemplate(String answer, ResearchPack researchPack) {
         String warning = researchPack.hasSources()
-                ? "Use the supplied source IDs for claims that depend on current external evidence."
+                ? "Use the registered source IDs for claims that depend on current or prompt-provided evidence."
                 : "External research was required, but no source pack was available; state uncertainty clearly.";
         return """
                 ### Decision

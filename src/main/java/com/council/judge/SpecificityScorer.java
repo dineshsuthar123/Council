@@ -322,6 +322,7 @@ public class SpecificityScorer {
             case BACKEND_ARCHITECTURE   -> List.of("backend_architecture", "distributed_systems");
             case DEBUGGING              -> List.of("debugging", "distributed_systems");
             case CODING                 -> List.of();
+            case RESEARCH_REQUIRED      -> List.of();
             case GENERAL_REASONING      -> List.of();
         };
     }

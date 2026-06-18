@@ -89,7 +89,7 @@ class FinalAnswerCompletenessGuardTest {
                                 "snippet", "2026-01-01", 0.9))));
 
         assertTemplateSections(composed);
-        assertTrue(composed.contains("Use the supplied source IDs"));
+        assertTrue(composed.contains("Use the registered source IDs"));
         assertTrue(composed.contains("Concrete Evidence Check"));
     }
 
