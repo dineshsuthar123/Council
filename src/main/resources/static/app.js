@@ -575,6 +575,7 @@ function renderTraceDebug(debug) {
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
     ${dimensionGrid(debug.dimensions)}
+    ${scoreBreakdownPanel(debug.scoreBreakdown)}
     ${invariantPanel(debug.invariantFindings)}
     ${researchPanel(debug.researchContext)}
     ${providerOutcomePanel(debug.draftResults)}
@@ -969,6 +970,51 @@ function invariantPanel(result) {
   `;
 }
 
+function scoreBreakdownPanel(breakdown) {
+  if (!breakdown || typeof breakdown !== "object") {
+    return "";
+  }
+
+  const fields = [
+    ["draftJudgeScore", "Draft judge score"],
+    ["synthesisConfidence", "Synthesis confidence"],
+    ["baseRubricScore", "Base rubric score"],
+    ["researchCalibratedScore", "Research-calibrated score"],
+    ["invariantCap", "Invariant cap"],
+    ["finalCompletenessCap", "Final completeness cap"],
+    ["productionConsistencyCap", "Production consistency cap"],
+    ["finalAnswerQuality", "Final answer quality"]
+  ];
+  const unavailable = breakdown.unavailableReasons && typeof breakdown.unavailableReasons === "object"
+    ? breakdown.unavailableReasons
+    : {};
+  const rows = fields.map(([key, label]) => {
+    const value = breakdown[key];
+    const detail = unavailable[key];
+    const rendered = value == null ? "N/A" : `${Math.round(scoreValue(value) * 100)}%`;
+    return `
+      <div class="score-explanation-row">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(rendered)}</strong>
+        ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
+      </div>
+    `;
+  }).join("");
+  const reasons = Array.isArray(breakdown.reasons) ? breakdown.reasons : [];
+
+  return `
+    <div class="score-explanation-panel" aria-label="Final answer quality formula">
+      <div class="dimension-heading">
+        <span>Score explanation</span>
+        <small>Actual score inputs and caps</small>
+      </div>
+      <div class="score-explanation-grid">${rows}</div>
+      <p class="score-formula">${escapeHtml(breakdown.formula || "Final score formula unavailable for this trace.")}</p>
+      ${reasons.length ? `<ul class="score-reasons">${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>` : ""}
+    </div>
+  `;
+}
+
 function labelizeDimension(key) {
   return String(key)
     .replace(/_/g, " ")
@@ -991,6 +1037,8 @@ function researchPanel(pack) {
     const risk = source.injectionRisk || "LOW";
     const type = source.sourceType || "UNKNOWN";
     const sourceOrigin = source.origin || "EXTERNAL_RESEARCH";
+    const boundary = source.metadata && source.metadata.boundaryEndReason;
+    const boundaryPreview = source.metadata && source.metadata.boundaryLinePreview;
     return `
       <article class="source-row">
         <div>
@@ -998,6 +1046,7 @@ function researchPanel(pack) {
           <p>${escapeHtml(source.snippet || "No snippet captured.")}</p>
           <a href="${href}" target="_blank" rel="noreferrer">${escapeHtml(source.domain || source.url || "source")}</a>
           <span>${escapeHtml(sourceOrigin)} · ${escapeHtml(type)} · injection ${escapeHtml(risk)}</span>
+          ${boundary ? `<span>boundary ${escapeHtml(boundary)}${boundaryPreview ? ` - ${escapeHtml(boundaryPreview)}` : ""}</span>` : ""}
         </div>
         <span>${escapeHtml(source.updatedAt || source.publishedAt || source.providedAt || "date --")}</span>
       </article>

@@ -1,5 +1,6 @@
 package com.council.api.dto;
 
+import com.council.judge.FinalScoreBreakdown;
 import com.council.judge.invariant.InvariantCriticResult;
 import com.council.research.ResearchPack;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -24,6 +25,7 @@ public record FinalResponse(
         Double winnerConfidence,
         Double modelAgreement,
         Map<String, Double> dimensions,
+        FinalScoreBreakdown scoreBreakdown,
         ResearchPack research,
         InvariantCriticResult invariants
 ) {
@@ -34,7 +36,7 @@ public record FinalResponse(
                          List<String> failedProviders,
                          double confidence) {
         this(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
-                confidence, null, null, confidence, confidence, null, null, null, null);
+                confidence, null, null, confidence, confidence, null, null, null, null, null);
     }
 
     public FinalResponse(String traceId,
@@ -46,7 +48,7 @@ public record FinalResponse(
                          String error,
                          String message) {
         this(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
-                confidence, error, message, confidence, confidence, null, null, null, null);
+                confidence, error, message, confidence, confidence, null, null, null, null, null);
     }
 
     public FinalResponse withScoreBreakdown(double answerQuality,
@@ -59,21 +61,29 @@ public record FinalResponse(
                                             double winnerConfidence,
                                             Double modelAgreement,
                                             Map<String, Double> dimensions) {
+        return withScoreBreakdown(answerQuality, winnerConfidence, modelAgreement, dimensions, null);
+    }
+
+    public FinalResponse withScoreBreakdown(double answerQuality,
+                                            double winnerConfidence,
+                                            Double modelAgreement,
+                                            Map<String, Double> dimensions,
+                                            FinalScoreBreakdown scoreBreakdown) {
         return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
                 answerQuality, error, message, answerQuality, winnerConfidence, modelAgreement,
-                dimensions, research, invariants);
+                dimensions, scoreBreakdown, research, invariants);
     }
 
     public FinalResponse withResearch(ResearchPack research) {
         return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
                 confidence, error, message, answerQuality, winnerConfidence, modelAgreement,
-                dimensions, research, invariants);
+                dimensions, scoreBreakdown, research, invariants);
     }
 
     public FinalResponse withInvariants(InvariantCriticResult invariants) {
         return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
                 confidence, error, message, answerQuality, winnerConfidence, modelAgreement,
-                dimensions, research, invariants);
+                dimensions, scoreBreakdown, research, invariants);
     }
 }
 
