@@ -64,6 +64,7 @@ public class TraceMapper {
             entity.setWinnerConfidence(response.winnerConfidence());
             entity.setModelAgreement(response.modelAgreement());
             entity.setScoreDimensions(toJson(response.dimensions()));
+            entity.setScoreBreakdown(toJson(response.scoreBreakdown()));
             entity.setResearchContext(toJson(response.research()));
             entity.setInvariantFindings(toJson(response.invariants()));
             entity.setJudgeReason(redactor.redact(response.judgeReason()));
@@ -92,6 +93,7 @@ public class TraceMapper {
                 e.getWinnerConfidence(),
                 e.getModelAgreement(),
                 e.getScoreDimensions(),
+                e.getScoreBreakdown(),
                 e.getResearchContext(),
                 e.getInvariantFindings(),
                 e.getJudgeReason(),
@@ -132,6 +134,7 @@ public class TraceMapper {
                 e.getWinnerConfidence(),
                 e.getModelAgreement(),
                 e.getScoreDimensions(),
+                e.getScoreBreakdown(),
                 e.getResearchContext(),
                 e.getInvariantFindings()
         );

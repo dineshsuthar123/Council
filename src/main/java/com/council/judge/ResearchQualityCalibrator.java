@@ -3,6 +3,7 @@ package com.council.judge;
 import com.council.common.CouncilUtils;
 import com.council.judge.invariant.InvariantCriticResult;
 import com.council.judge.invariant.InvariantDomain;
+import com.council.judge.research.ResearchClaimConsistencyCritic;
 import com.council.research.ResearchPack;
 import com.council.research.ResearchSource;
 
@@ -22,6 +23,8 @@ import java.util.regex.Pattern;
 public final class ResearchQualityCalibrator {
 
     private static final Pattern CITATION = Pattern.compile("\\[S(\\d+)]");
+    private static final ResearchClaimConsistencyCritic CLAIM_CONSISTENCY_CRITIC =
+            new ResearchClaimConsistencyCritic();
 
     private ResearchQualityCalibrator() {}
 
@@ -32,6 +35,13 @@ public final class ResearchQualityCalibrator {
     }
 
     public static QualityScore qualityScore(String answer, ResearchPack pack, double fallbackScore) {
+        return qualityScore("", answer, pack, fallbackScore);
+    }
+
+    public static QualityScore qualityScore(String prompt,
+                                            String answer,
+                                            ResearchPack pack,
+                                            double fallbackScore) {
         if (pack == null || !pack.required()) {
             return new QualityScore(CouncilUtils.clamp01(fallbackScore), Map.of(), List.of());
         }
@@ -45,6 +55,10 @@ public final class ResearchQualityCalibrator {
             dimensions.put("unsupported_claim_penalty", 0.45);
             dimensions.put("conflict_handling", 0.50);
             dimensions.put("answer_completeness", 0.50);
+            dimensions.put("claim_evidence_consistency", 0.20);
+            dimensions.put("source_boundary_integrity", 0.20);
+            dimensions.put("final_contract_compliance", 0.60);
+            dimensions.put("research_pipeline_concreteness", 0.20);
             return new QualityScore(Math.min(CouncilUtils.clamp01(fallbackScore), 0.72),
                     Map.copyOf(dimensions),
                     List.of("external research was required but no sources were available"));
@@ -54,22 +68,35 @@ public final class ResearchQualityCalibrator {
         Set<String> registeredIds = pack.sourceIds();
         int sourceCount = pack.sources().size();
         long invalidCitations = citations.stream().filter(id -> !registeredIds.contains(id)).count();
+        ResearchClaimConsistencyCritic.Assessment consistency =
+                CLAIM_CONSISTENCY_CRITIC.assess(prompt, answer, pack);
 
         dimensions.put("source_quality", scoreSourceQuality(pack.sources()));
-        dimensions.put("citation_accuracy", scoreCitationAccuracy(answer, pack, citations, invalidCitations, sourceCount));
+        dimensions.put("citation_accuracy", scoreCitationAccuracy(answer, pack, citations, invalidCitations,
+                sourceCount, consistency));
         dimensions.put("recency", scoreRecency(pack));
         dimensions.put("evidence_coverage", scoreEvidenceCoverage(citations, sourceCount));
-        dimensions.put("unsupported_claim_penalty", scoreSupportedness(answer, citations));
+        dimensions.put("unsupported_claim_penalty", scoreSupportedness(answer, citations, consistency));
         dimensions.put("conflict_handling", scoreConflictHandling(answer));
         dimensions.put("answer_completeness", scoreAnswerCompleteness(answer, citations));
+        dimensions.put("claim_evidence_consistency", consistency.claimEvidenceConsistency());
+        dimensions.put("source_boundary_integrity", consistency.sourceBoundaryIntegrity());
+        dimensions.put("final_contract_compliance", consistency.finalContractCompliance());
+        dimensions.put("research_pipeline_concreteness", consistency.researchPipelineConcreteness());
+        dimensions.put("enumerated_section_coverage", consistency.enumeratedSectionCoverage());
 
-        double weighted = (dimensions.get("source_quality") * 0.18)
-                + (dimensions.get("citation_accuracy") * 0.22)
-                + (dimensions.get("recency") * 0.14)
-                + (dimensions.get("evidence_coverage") * 0.16)
-                + (dimensions.get("unsupported_claim_penalty") * 0.14)
-                + (dimensions.get("conflict_handling") * 0.06)
-                + (dimensions.get("answer_completeness") * 0.10);
+        double weighted = (dimensions.get("source_quality") * 0.14)
+                + (dimensions.get("citation_accuracy") * 0.18)
+                + (dimensions.get("recency") * 0.10)
+                + (dimensions.get("evidence_coverage") * 0.11)
+                + (dimensions.get("unsupported_claim_penalty") * 0.10)
+                + (dimensions.get("conflict_handling") * 0.05)
+                + (dimensions.get("answer_completeness") * 0.07)
+                + (dimensions.get("claim_evidence_consistency") * 0.12)
+                + (dimensions.get("source_boundary_integrity") * 0.04)
+                + (dimensions.get("final_contract_compliance") * 0.04)
+                + (dimensions.get("research_pipeline_concreteness") * 0.04)
+                + (dimensions.get("enumerated_section_coverage") * 0.01);
 
         double cap = 1.0;
         if (citations.isEmpty()) {
@@ -84,17 +111,31 @@ public final class ResearchQualityCalibrator {
         if (mentionsSourcesWithoutIds(answer, citations)) {
             cap = Math.min(cap, 0.70);
         }
+        if (consistency.claimEvidenceConsistency() <= 0.25) {
+            cap = Math.min(cap, 0.50);
+        }
+        if (consistency.sourceBoundaryIntegrity() <= 0.20) {
+            cap = Math.min(cap, 0.55);
+        }
 
         return new QualityScore(CouncilUtils.clamp01(Math.min(weighted, cap)),
                 Map.copyOf(dimensions),
-                reasons(answer, citations, invalidCitations, pack));
+                reasons(answer, citations, invalidCitations, pack, consistency));
     }
 
     public static QualityScore qualityScore(String answer,
-                                            ResearchPack pack,
-                                            double fallbackScore,
-                                            InvariantCriticResult invariantResult) {
-        QualityScore base = qualityScore(answer, pack, fallbackScore);
+                                             ResearchPack pack,
+                                             double fallbackScore,
+                                             InvariantCriticResult invariantResult) {
+        return qualityScore("", answer, pack, fallbackScore, invariantResult);
+    }
+
+    public static QualityScore qualityScore(String prompt,
+                                             String answer,
+                                             ResearchPack pack,
+                                             double fallbackScore,
+                                             InvariantCriticResult invariantResult) {
+        QualityScore base = qualityScore(prompt, answer, pack, fallbackScore);
         if (invariantResult == null || !invariantResult.evaluated()) {
             return base;
         }
@@ -130,10 +171,11 @@ public final class ResearchQualityCalibrator {
     }
 
     private static double scoreCitationAccuracy(String answer,
-                                                ResearchPack pack,
-                                                Set<String> citations,
-                                                long invalidCitations,
-                                                int sourceCount) {
+                                                 ResearchPack pack,
+                                                 Set<String> citations,
+                                                 long invalidCitations,
+                                                 int sourceCount,
+                                                 ResearchClaimConsistencyCritic.Assessment consistency) {
         if (invalidCitations > 0) {
             return 0.20;
         }
@@ -145,6 +187,9 @@ public final class ResearchQualityCalibrator {
         }
         if (officialPricingAvailableButNotCited(answer, pack, citations)) {
             return 0.45;
+        }
+        if (!consistency.citationIssues().isEmpty()) {
+            return consistency.claimEvidenceConsistency() <= 0.25 ? 0.35 : 0.55;
         }
         int expected = Math.min(2, sourceCount);
         if (citations.size() >= expected) {
@@ -180,7 +225,9 @@ public final class ResearchQualityCalibrator {
         return CouncilUtils.clamp01(0.50 + (coverage * 0.45));
     }
 
-    private static double scoreSupportedness(String answer, Set<String> citations) {
+    private static double scoreSupportedness(String answer,
+                                             Set<String> citations,
+                                             ResearchClaimConsistencyCritic.Assessment consistency) {
         String text = normalize(answer);
         boolean makesCurrentClaim = containsAny(text, "latest", "currently", "as of", "today",
                 "now", "recent", "price", "release", "announced");
@@ -189,6 +236,12 @@ public final class ResearchQualityCalibrator {
         }
         if (citations.isEmpty()) {
             return 0.45;
+        }
+        if (consistency.claimEvidenceConsistency() <= 0.25) {
+            return 0.30;
+        }
+        if (!consistency.citationIssues().isEmpty()) {
+            return 0.58;
         }
         return makesCurrentClaim ? 0.88 : 0.82;
     }
@@ -260,9 +313,10 @@ public final class ResearchQualityCalibrator {
     }
 
     private static List<String> reasons(String answer,
-                                        Set<String> citations,
-                                        long invalidCitations,
-                                        ResearchPack pack) {
+                                         Set<String> citations,
+                                         long invalidCitations,
+                                         ResearchPack pack,
+                                         ResearchClaimConsistencyCritic.Assessment consistency) {
         List<String> reasons = new ArrayList<>();
         if (citations.isEmpty()) {
             reasons.add("research answer did not cite the provided evidence pack");
@@ -273,6 +327,7 @@ public final class ResearchQualityCalibrator {
         if (citesHighInjectionRiskSource(answer, pack, citations)) {
             reasons.add("answer cited a high prompt-injection-risk source");
         }
+        reasons.addAll(consistency.citationIssues());
         return List.copyOf(reasons);
     }
 

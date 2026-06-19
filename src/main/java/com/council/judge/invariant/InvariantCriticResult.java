@@ -69,6 +69,20 @@ public record InvariantCriticResult(
         return clamp01(cap);
     }
 
+    /**
+     * Returns the actual cap contributed by a specific violated invariant, or {@code null} when it did not apply.
+     */
+    public Double capForInvariant(String invariantId) {
+        if (invariantId == null || invariantId.isBlank()) {
+            return null;
+        }
+        return violations.stream()
+                .filter(violation -> invariantId.equals(violation.invariantId()))
+                .map(InvariantViolation::scoreCap)
+                .min(Double::compareTo)
+                .orElse(null);
+    }
+
     public Map<String, Double> dimensionScoresForDomains(InvariantDomain... domains) {
         Map<String, Double> scores = new LinkedHashMap<>();
         if (domains == null || domains.length == 0) {

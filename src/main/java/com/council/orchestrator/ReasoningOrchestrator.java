@@ -7,11 +7,13 @@ import com.council.config.CouncilProperties;
 import com.council.critic.CriticEngine;
 import com.council.events.PipelineEventBroadcaster;
 import com.council.judge.DeterministicJudge;
+import com.council.judge.FinalScoreBreakdown;
 import com.council.judge.PromptClassifier;
 import com.council.judge.ProductionConsistencyCalibrator;
 import com.council.judge.ResearchQualityCalibrator;
 import com.council.judge.TaskType;
 import com.council.judge.invariant.InvariantCriticResult;
+import com.council.judge.invariant.InvariantLibrary;
 import com.council.judge.invariant.InvariantViolationCritic;
 import com.council.metrics.OrchestrationMetrics;
 import com.council.model.*;
@@ -402,7 +404,7 @@ public class ReasoningOrchestrator {
             }
             finalAnswer = FinalAnswerCompletenessGuard.compose(userQuery, finalAnswer, researchPack);
             CalibratedFinalQuality finalQuality =
-                    calibrateFinalQuality(userQuery, finalAnswer, null, finalConfidence, researchPack);
+                    calibrateFinalQuality(userQuery, finalAnswer, null, finalConfidence, winnerConfidence, researchPack);
             finalConfidence = finalQuality.score();
 
             FinalResponse response = new FinalResponse(
@@ -416,7 +418,8 @@ public class ReasoningOrchestrator {
                     finalConfidence,
                     winnerConfidence,
                     modelAgreement(finalJudge.rankings()),
-                    finalQuality.dimensions())
+                    finalQuality.dimensions(),
+                    finalQuality.scoreBreakdown())
                     .withResearch(researchPack)
                     .withInvariants(finalQuality.invariants());
 
@@ -1013,12 +1016,14 @@ public class ReasoningOrchestrator {
     }
 
     private CalibratedFinalQuality calibrateFinalQuality(String userQuery,
-                                                         String answer,
-                                                         String summary,
-                                                         double confidence,
-                                                         ResearchPack researchPack) {
+                                                          String answer,
+                                                          String summary,
+                                                          double confidence,
+                                                          double draftJudgeScore,
+                                                          ResearchPack researchPack) {
         InvariantCriticResult invariantResult =
                 invariantViolationCritic.evaluate(userQuery, answer, researchPack);
+        double productionConsistencyCap = ProductionConsistencyCalibrator.evaluate(answer, summary).cap();
         ProductionConsistencyCalibrator.QualityScore productionScore =
                 ProductionConsistencyCalibrator.qualityScore(answer, summary, confidence, invariantResult);
         double score = productionScore.score();
@@ -1026,27 +1031,57 @@ public class ReasoningOrchestrator {
         List<String> reasons = new ArrayList<>(productionScore.reasons());
 
         ResearchQualityCalibrator.QualityScore researchScore =
-                ResearchQualityCalibrator.qualityScore(answer, researchPack, score, invariantResult);
+                ResearchQualityCalibrator.qualityScore(userQuery, answer, researchPack, score, invariantResult);
+        Map<String, String> unavailableReasons = new LinkedHashMap<>();
+        Double researchCalibratedScore = null;
         if (researchScore.applied()) {
+            researchCalibratedScore = researchScore.score();
             dimensions.putAll(researchScore.dimensions());
             reasons.addAll(researchScore.reasons());
             score = Math.min(score, researchScore.score());
+        } else {
+            unavailableReasons.put("researchCalibratedScore", "Not a research-required task.");
         }
 
+        Double invariantCap = null;
+        Double finalCompletenessCap = null;
         if (invariantResult.evaluated()) {
+            invariantCap = invariantResult.overallCap();
+            finalCompletenessCap = invariantResult.capForInvariant(
+                    InvariantLibrary.FINAL_RECOMMENDATION_CONSTRAINT_MUST_BE_FOLLOWED);
             dimensions.put("invariant_overall_cap", invariantResult.overallCap());
             score = Math.min(score, invariantResult.overallCap());
+        } else {
+            unavailableReasons.put("invariantCap", "No invariant domain applied to this answer.");
+        }
+        if (finalCompletenessCap == null) {
+            unavailableReasons.put("finalCompletenessCap", "No final-answer sentence-count cap was applied.");
         }
 
         if (productionScore.applied() || researchScore.applied() || invariantResult.hasViolations()) {
             log.info("[orchestrator] Final quality calibrated from {} to {} by quality rubrics: dimensions={}, reasons={}, invariantViolations={}",
                     confidence, score, dimensions, reasons, invariantResult.violations().size());
         }
+        double finalAnswerQuality = CouncilUtils.clamp01(score);
+        FinalScoreBreakdown scoreBreakdown = new FinalScoreBreakdown(
+                draftJudgeScore,
+                confidence,
+                productionScore.score(),
+                researchCalibratedScore,
+                invariantCap,
+                finalCompletenessCap,
+                productionConsistencyCap,
+                finalAnswerQuality,
+                "finalAnswerQuality = min(baseRubricScore, researchCalibratedScore when available, "
+                        + "invariantCap when evaluated); baseRubricScore already includes productionConsistencyCap.",
+                reasons,
+                unavailableReasons);
         return new CalibratedFinalQuality(
-                CouncilUtils.clamp01(score),
+                finalAnswerQuality,
                 Map.copyOf(dimensions),
                 List.copyOf(reasons),
-                invariantResult);
+                invariantResult,
+                scoreBreakdown);
     }
 
     private Double modelAgreement(List<JudgeRanking> rankings) {
@@ -1114,9 +1149,10 @@ public class ReasoningOrchestrator {
     }
 
     private record CalibratedFinalQuality(double score,
-                                          Map<String, Double> dimensions,
-                                          List<String> reasons,
-                                          InvariantCriticResult invariants) {}
+                                           Map<String, Double> dimensions,
+                                           List<String> reasons,
+                                           InvariantCriticResult invariants,
+                                           FinalScoreBreakdown scoreBreakdown) {}
 
     private record DraftFilterResult(List<DraftResult> validDrafts,
                                      List<String> invalidProviders) {}

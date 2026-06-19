@@ -22,6 +22,7 @@ public record TraceResponse(
         Double winnerConfidence,
         Double modelAgreement,
         @JsonRawValue String dimensions,
+        @JsonRawValue String scoreBreakdown,
         @JsonRawValue String researchContext,
         @JsonRawValue String invariantFindings,
         String judgeReason,

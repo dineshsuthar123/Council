@@ -2,6 +2,7 @@ package com.council.trace;
 
 import com.council.api.dto.FinalResponse;
 import com.council.common.TraceStatus;
+import com.council.judge.FinalScoreBreakdown;
 import com.council.judge.invariant.InvariantCriticResult;
 import com.council.judge.invariant.InvariantLibrary;
 import com.council.judge.invariant.InvariantViolation;
@@ -46,7 +47,8 @@ class TraceMapperTest {
         FinalResponse response = new FinalResponse("trace-1", "answer",
                 "Winner by default", List.of("gemini"), List.of("deepseek"), 0.9)
                 .withScoreBreakdown(0.84, 0.55, 0.95,
-                        Map.of("pseudocode", 0.42, "deletion_safety", 0.90))
+                        Map.of("pseudocode", 0.42, "deletion_safety", 0.90),
+                        sampleScoreBreakdown())
                 .withResearch(ResearchPack.withSources(
                         "Prompt asks for current information.",
                         List.of("latest routing"),
@@ -66,6 +68,7 @@ class TraceMapperTest {
         assertEquals(0.55, entity.getWinnerConfidence());
         assertEquals(0.95, entity.getModelAgreement());
         assertTrue(entity.getScoreDimensions().contains("\"pseudocode\":0.42"));
+        assertTrue(entity.getScoreBreakdown().contains("\"finalAnswerQuality\":0.84"));
         assertTrue(entity.getResearchContext().contains("\"id\":\"S1\""));
         assertTrue(entity.getInvariantFindings().contains("\"invariantId\":\"url.tombstone_precedes_active_cache\""));
         assertEquals("Winner by default", entity.getJudgeReason());
@@ -95,6 +98,7 @@ class TraceMapperTest {
         entity.setWinnerConfidence(0.55);
         entity.setModelAgreement(0.95);
         entity.setScoreDimensions("{\"pseudocode\":0.42}");
+        entity.setScoreBreakdown("{\"baseRubricScore\":0.84,\"finalAnswerQuality\":0.76}");
         entity.setResearchContext("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}");
         entity.setInvariantFindings("{\"overallCap\":0.75}");
         entity.setTotalLatencyMs(1000L);
@@ -108,6 +112,7 @@ class TraceMapperTest {
         assertEquals(0.55, resp.winnerConfidence());
         assertEquals(0.95, resp.modelAgreement());
         assertEquals("{\"pseudocode\":0.42}", resp.dimensions());
+        assertEquals("{\"baseRubricScore\":0.84,\"finalAnswerQuality\":0.76}", resp.scoreBreakdown());
         assertEquals("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}", resp.researchContext());
         assertEquals("{\"overallCap\":0.75}", resp.invariantFindings());
         assertEquals(List.of("gemini", "deepseek"), resp.usedProviders());
@@ -162,6 +167,7 @@ class TraceMapperTest {
         entity.setWinnerConfidence(0.55);
         entity.setModelAgreement(0.95);
         entity.setScoreDimensions("{\"pseudocode\":0.42,\"deletion_safety\":0.9}");
+        entity.setScoreBreakdown("{\"invariantCap\":0.6,\"finalAnswerQuality\":0.55}");
         entity.setResearchContext("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}");
         entity.setInvariantFindings("{\"overallCap\":0.75,\"violations\":[]}");
         entity.setJudgeReason("Gemini had the highest composite score");
@@ -193,6 +199,7 @@ class TraceMapperTest {
         assertEquals(0.55, debug.winnerConfidence());
         assertEquals(0.95, debug.modelAgreement());
         assertEquals("{\"pseudocode\":0.42,\"deletion_safety\":0.9}", debug.dimensions());
+        assertEquals("{\"invariantCap\":0.6,\"finalAnswerQuality\":0.55}", debug.scoreBreakdown());
         assertEquals("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}", debug.researchContext());
         assertEquals("{\"overallCap\":0.75,\"violations\":[]}", debug.invariantFindings());
     }
@@ -227,6 +234,12 @@ class TraceMapperTest {
         return InvariantCriticResult.from(
                 List.of(definition),
                 List.of(InvariantViolation.of(definition, "active cache checked first", "check tombstone first")));
+    }
+
+    private FinalScoreBreakdown sampleScoreBreakdown() {
+        return new FinalScoreBreakdown(0.55, 0.84, 0.84, 0.76, 0.60, null,
+                1.0, 0.84, "final = min(base, research, invariant)", List.of("example"),
+                Map.of("finalCompletenessCap", "No sentence-count cap applied."));
     }
 }
 

@@ -20,7 +20,18 @@ import java.util.regex.Pattern;
 public class PromptProvidedEvidenceParser {
 
     private static final Pattern SOURCE_HEADING = Pattern.compile(
-            "(?im)^\\s*(?:source\\s*(?:\\[(\\d+)]|(\\d+))|\\[s(\\d+)]|s(\\d+))\\s*:\\s*(.*)$");
+            "(?im)^\\s*(?:(?:#{1,6}|[-+])\\s*|\\*\\*\\s*)?"
+                    + "(?:source\\s*(?:\\[(\\d+)]|(\\d+))|\\[s(\\d+)]|s(\\d+))"
+                    + "\\s*(?:\\*\\*)?\\s*:\\s*(.*)$");
+    private static final Pattern INSTRUCTION_BOUNDARY = Pattern.compile(
+            "(?im)^\\s*(?:(?:#{1,6}|[-+])\\s*|\\*\\*\\s*)?"
+                    + "(?:task|question|important\\s+constraints|instructions?|your\\s+task|"
+                    + "output\\s+requirements?|required\\s+output|return|"
+                    + "give\\s+(?:a\\s+)?production[- ]grade\\s+answer|"
+                    + "give\\s+the\\s+final\\s+answer|evaluation\\s+criteria|constraints?|rules?|"
+                    + "system|developer|user|answer\\s+format|scoring|expected\\s+behavior|"
+                    + "what\\s+a\\s+strong\\s+answer\\s+should\\s+contain)"
+                    + "\\s*(?:\\*\\*)?\\s*:?.*$");
     private static final Pattern URL = Pattern.compile("https?://[^\\s)\\]>\"']+");
     private static final Pattern DATE = Pattern.compile("\\b(20\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}|20\\d{2})\\b");
 
@@ -45,18 +56,27 @@ public class PromptProvidedEvidenceParser {
         String providedAt = Instant.now().toString();
         for (int i = 0; i < headings.size(); i++) {
             Heading heading = headings.get(i);
-            int contentEnd = i + 1 < headings.size() ? headings.get(i + 1).start : raw.length();
+            int nextSourceStart = i + 1 < headings.size() ? headings.get(i + 1).start : raw.length();
+            Boundary boundary = instructionBoundary(raw, heading.end, nextSourceStart);
+            int contentEnd = boundary == null ? nextSourceStart : boundary.start;
             String headingTail = heading.tail == null ? "" : heading.tail.trim();
             String content = (headingTail + "\n" + raw.substring(heading.end, contentEnd)).trim();
             if (content.isBlank()) {
                 content = headingTail;
             }
-            sources.add(toSource(heading.number, content, providedAt));
+            SourceBoundaryEndReason endReason = boundary != null
+                    ? SourceBoundaryEndReason.INSTRUCTION_BOUNDARY
+                    : i + 1 < headings.size()
+                    ? SourceBoundaryEndReason.NEXT_SOURCE
+                    : SourceBoundaryEndReason.END_OF_PROMPT;
+            sources.add(toSource(heading.number, content, providedAt,
+                    new SourceSlice(heading.start, contentEnd, endReason,
+                            boundary == null ? null : boundary.preview)));
         }
         return List.copyOf(sources);
     }
 
-    private ResearchSource toSource(int number, String content, String providedAt) {
+    private ResearchSource toSource(int number, String content, String providedAt, SourceSlice slice) {
         String id = "S" + number;
         String title = title(content, id);
         String url = firstUrl(content);
@@ -73,7 +93,13 @@ public class PromptProvidedEvidenceParser {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("parser", "prompt-provided");
         metadata.put("sourceNumber", number);
-        metadata.put("lineCount", Math.max(1, content.split("\\R").length));
+        metadata.put("boundaryEndReason", slice.endReason.name());
+        if (slice.boundaryPreview != null) {
+            metadata.put("boundaryLinePreview", slice.boundaryPreview);
+        }
+        metadata.put("originalStartOffset", slice.startOffset);
+        metadata.put("originalEndOffset", slice.endOffset);
+        metadata.put("parsedLineCount", Math.max(1, content.split("\\R").length));
 
         return new ResearchSource(
                 id,
@@ -231,5 +257,28 @@ public class PromptProvidedEvidenceParser {
         return Math.max(0.0, Math.min(1.0, value));
     }
 
+    private Boundary instructionBoundary(String raw, int searchStart, int maxEnd) {
+        Matcher matcher = INSTRUCTION_BOUNDARY.matcher(raw);
+        if (!matcher.find(searchStart) || matcher.start() >= maxEnd) {
+            return null;
+        }
+        return new Boundary(matcher.start(), preview(matcher.group()));
+    }
+
+    private String preview(String boundaryLine) {
+        String compact = boundaryLine == null ? null : boundaryLine.replaceAll("\\s+", " ").trim();
+        if (compact == null || compact.isBlank()) {
+            return null;
+        }
+        return compact.length() <= 160 ? compact : compact.substring(0, 160);
+    }
+
     private record Heading(int number, int start, int end, String tail) {}
+
+    private record Boundary(int start, String preview) {}
+
+    private record SourceSlice(int startOffset,
+                               int endOffset,
+                               SourceBoundaryEndReason endReason,
+                               String boundaryPreview) {}
 }

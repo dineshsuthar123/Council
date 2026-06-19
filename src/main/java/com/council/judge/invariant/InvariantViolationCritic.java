@@ -1,5 +1,6 @@
 package com.council.judge.invariant;
 
+import com.council.judge.research.ResearchClaimConsistencyCritic;
 import com.council.research.ResearchPack;
 import com.council.research.ResearchSource;
 import com.council.research.SourceType;
@@ -25,6 +26,15 @@ public class InvariantViolationCritic {
     private static final Pattern CITATION = Pattern.compile("\\[S(\\d+)]", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROMPT_SOURCE_HEADING = Pattern.compile(
             "(?i)(?:\\bsource\\s*(?:\\[?\\d+]?|\\d+)|\\[s\\d+]|\\bs\\d+)\\s*:");
+    private final ResearchClaimConsistencyCritic researchClaimConsistencyCritic;
+
+    public InvariantViolationCritic() {
+        this(new ResearchClaimConsistencyCritic());
+    }
+
+    InvariantViolationCritic(ResearchClaimConsistencyCritic researchClaimConsistencyCritic) {
+        this.researchClaimConsistencyCritic = researchClaimConsistencyCritic;
+    }
 
     public InvariantCriticResult evaluate(String prompt, String answer) {
         return evaluate(prompt, answer, ResearchPack.notRequired());
@@ -48,7 +58,7 @@ public class InvariantViolationCritic {
         }
         if (looksLikeResearch(promptText, answerText, researchPack)) {
             checked.addAll(InvariantLibrary.definitionsFor(InvariantDomain.RESEARCH_EVIDENCE));
-            evaluateResearch(promptText, answerText, researchPack, violations);
+            evaluateResearch(prompt, answer, researchPack, violations);
         }
 
         if (checked.isEmpty()) {
@@ -208,10 +218,12 @@ public class InvariantViolationCritic {
                                   String answer,
                                   ResearchPack researchPack,
                                   List<InvariantViolation> violations) {
+        String normalizedPrompt = normalize(prompt);
+        String normalizedAnswer = normalize(answer);
         boolean hasSources = researchPack != null && researchPack.hasSources();
-        boolean promptHasSourceBlocks = PROMPT_SOURCE_HEADING.matcher(prompt == null ? "" : prompt).find();
+        boolean promptHasSourceBlocks = PROMPT_SOURCE_HEADING.matcher(normalizedPrompt).find();
         boolean hasPromptSources = researchPack != null && researchPack.hasPromptProvidedSources();
-        Set<String> citations = citationIds(answer);
+        Set<String> citations = citationIds(normalizedAnswer);
         Set<String> registeredIds = hasSources ? researchPack.sourceIds() : Set.of();
 
         if (promptHasSourceBlocks && !hasPromptSources) {
@@ -238,7 +250,7 @@ public class InvariantViolationCritic {
                     "Only cite source IDs that are present in the evidence pack.");
         }
 
-        boolean hasConflicts = containsAny(prompt, "conflicting source", "sources conflict",
+        boolean hasConflicts = containsAny(normalizedPrompt, "conflicting source", "sources conflict",
                 "conflicting reports", "disagree", "contradict")
                 || packHasConflictSignals(researchPack);
         boolean handlesConflict = containsAny(answer, "conflict", "conflicting", "sources differ",
@@ -252,8 +264,8 @@ public class InvariantViolationCritic {
                     "Name the conflict, compare source freshness/authority, and state the better-supported claim.");
         }
 
-        boolean timeSensitive = isTimeSensitive(prompt, researchPack);
-        boolean hasRecency = containsAny(answer, "as of", "published", "dated", "current date",
+        boolean timeSensitive = isTimeSensitive(normalizedPrompt, researchPack);
+        boolean hasRecency = containsAny(normalizedAnswer, "as of", "published", "dated", "current date",
                 "today", "latest", "recent", "2025", "2026") || !citations.isEmpty();
         if (timeSensitive && !hasRecency) {
             add(violations, InvariantLibrary.RESEARCH_RECENCY,
@@ -261,7 +273,7 @@ public class InvariantViolationCritic {
                     "Mention the relevant date context and cite recent evidence.");
         }
 
-        boolean makesCurrentClaim = containsAny(answer, "latest", "currently", "as of", "today",
+        boolean makesCurrentClaim = containsAny(normalizedAnswer, "latest", "currently", "as of", "today",
                 "now", "recent", "price", "release", "announced", "ceo", "president");
         if ((researchPack != null && researchPack.required()) && makesCurrentClaim && citations.isEmpty()) {
             add(violations, InvariantLibrary.RESEARCH_NO_UNSUPPORTED_CURRENT_CLAIMS,
@@ -302,10 +314,10 @@ public class InvariantViolationCritic {
                     "Surface p95/error/reliability risks near the recommendation.");
         }
 
-        if (finalRecommendationConstraintMissed(prompt, answer)) {
-            add(violations, InvariantLibrary.FINAL_RECOMMENDATION_CONSTRAINT_MUST_BE_FOLLOWED,
-                    "Prompt requires a final recommendation in 8-12 sentences, but the answer misses that contract.",
-                    "Provide the final recommendation in the requested sentence range.");
+        ResearchClaimConsistencyCritic.Assessment consistency =
+                researchClaimConsistencyCritic.assess(prompt, answer, researchPack);
+        for (ResearchClaimConsistencyCritic.Finding finding : consistency.findings()) {
+            add(violations, finding.invariantId(), finding.evidence(), finding.remediation());
         }
     }
 
@@ -334,7 +346,9 @@ public class InvariantViolationCritic {
         if (pack != null && pack.required()) {
             return true;
         }
-        return containsAny(prompt + " " + answer, "latest", "current", "today", "research",
+        // Research-only invariants must be selected by the user request or an evidence pack, never by
+        // incidental language in a generated answer such as a payment's "current status".
+        return containsAny(prompt, "latest", "current", "today", "research",
                 "cite", "citation", "source", "sources conflict", "conflicting sources");
     }
 
