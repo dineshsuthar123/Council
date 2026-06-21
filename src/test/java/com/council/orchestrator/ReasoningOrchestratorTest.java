@@ -146,6 +146,30 @@ class ReasoningOrchestratorTest {
     /* ── Partial failure: one provider fails ───────────────────────── */
 
     @Test
+    @DisplayName("Blackbox logical providers draft and persist as separate trace providers")
+    void blackboxLogicalProvidersAreComparedSeparately() {
+        LlmAdapter gpt = mockAdapter("blackbox-gpt55", "blackbox/example-gpt",
+                DraftResult.success("blackbox-gpt55", "blackbox/example-gpt",
+                        "GPT answer", "GPT summary", List.of(), List.of(), 0.84, 300, "raw-gpt"));
+        LlmAdapter claude = mockAdapter("blackbox-claude-sonnet", "blackbox/example-claude",
+                DraftResult.success("blackbox-claude-sonnet", "blackbox/example-claude",
+                        "Claude answer", "Claude summary", List.of(), List.of(), 0.91, 350, "raw-claude"));
+        when(registry.getAvailableDraftProviders()).thenReturn(List.of(gpt, claude));
+        when(criticEngine.critique(any())).thenReturn(
+                CriticResult.failure("critic", "critic-model", "critic unavailable", 0));
+
+        FinalResponse response = orchestrator.reason("Compare two deployment strategies.");
+
+        assertTrue(response.usedProviders().containsAll(List.of("blackbox-gpt55", "blackbox-claude-sonnet")));
+        verify(gpt).generateDraft(any());
+        verify(claude).generateDraft(any());
+        verify(traceService).persistAsync(anyString(), anyString(),
+                argThat(drafts -> drafts.stream().map(DraftResult::provider).toList()
+                        .containsAll(List.of("blackbox-gpt55", "blackbox-claude-sonnet"))),
+                any(), any(), any(), anyLong());
+    }
+
+    @Test
     @DisplayName("Partial failure: one provider fails, orchestrator continues with remaining")
     void partialFailure_oneProviderFails() {
         LlmAdapter geminiAdapter = mockAdapter("gemini", "gemini-2.5-pro",

@@ -64,6 +64,71 @@ council:
     admin-password: ${COUNCIL_ADMIN_PASSWORD:}
 
   providers:
+    # Blackbox AI provider family. Each enabled logical model is registered as an independent provider.
+    blackbox:
+      enabled: ${BLACKBOX_ENABLED:true}
+      base-url: ${BLACKBOX_BASE_URL:https://api.blackbox.ai/chat/completions}
+      defaults:
+        timeout-ms: ${BLACKBOX_TIMEOUT_MS:60000}
+        temperature: ${BLACKBOX_TEMPERATURE:0.2}
+        max-tokens: ${BLACKBOX_MAX_TOKENS:4096}
+        priority: ${BLACKBOX_PRIORITY:100}
+        reliability: ${BLACKBOX_RELIABILITY:0.80}
+      models:
+        gpt55:
+          enabled: ${BLACKBOX_GPT55_ENABLED:false}
+          provider-id: blackbox-gpt55
+          display-name: Blackbox GPT-5.5
+          api-key: ${BLACKBOX_GPT55_API_KEY:}
+          model: ${BLACKBOX_GPT55_MODEL:blackboxai/openai/gpt-5.5}
+        gpt55-pro:
+          enabled: ${BLACKBOX_GPT55_PRO_ENABLED:false}
+          provider-id: blackbox-gpt55-pro
+          display-name: Blackbox GPT-5.5 Pro
+          api-key: ${BLACKBOX_GPT55_PRO_API_KEY:}
+          model: ${BLACKBOX_GPT55_PRO_MODEL:blackboxai/openai/gpt-5.5-pro}
+        claude-sonnet:
+          enabled: ${BLACKBOX_CLAUDE_SONNET_ENABLED:false}
+          provider-id: blackbox-claude-sonnet
+          display-name: Blackbox Claude Sonnet
+          api-key: ${BLACKBOX_CLAUDE_SONNET_API_KEY:}
+          model: ${BLACKBOX_CLAUDE_SONNET_MODEL:blackboxai/anthropic/claude-sonnet-4.6}
+        claude-opus:
+          enabled: ${BLACKBOX_CLAUDE_OPUS_ENABLED:false}
+          provider-id: blackbox-claude-opus
+          display-name: Blackbox Claude Opus
+          api-key: ${BLACKBOX_CLAUDE_OPUS_API_KEY:}
+          model: ${BLACKBOX_CLAUDE_OPUS_MODEL:blackboxai/anthropic/claude-opus-4.8}
+        gemini:
+          enabled: ${BLACKBOX_GEMINI_ENABLED:false}
+          provider-id: blackbox-gemini
+          display-name: Blackbox Gemini Flash
+          api-key: ${BLACKBOX_GEMINI_API_KEY:}
+          model: ${BLACKBOX_GEMINI_MODEL:blackboxai/google/gemini-3.5-flash}
+        gemini-pro:
+          enabled: ${BLACKBOX_GEMINI_PRO_ENABLED:false}
+          provider-id: blackbox-gemini-pro
+          display-name: Blackbox Gemini Pro
+          api-key: ${BLACKBOX_GEMINI_PRO_API_KEY:}
+          model: ${BLACKBOX_GEMINI_PRO_MODEL:blackboxai/google/gemini-3.1-pro-preview}
+        nemotron:
+          enabled: ${BLACKBOX_NEMOTRON_ENABLED:false}
+          provider-id: blackbox-nemotron
+          display-name: Blackbox Nemotron
+          api-key: ${BLACKBOX_NEMOTRON_API_KEY:}
+          model: ${BLACKBOX_NEMOTRON_MODEL:blackboxai/nvidia/nemotron-3-ultra}
+        deepseek:
+          enabled: ${BLACKBOX_DEEPSEEK_ENABLED:false}
+          provider-id: blackbox-deepseek
+          display-name: Blackbox DeepSeek
+          api-key: ${BLACKBOX_DEEPSEEK_API_KEY:}
+          model: ${BLACKBOX_DEEPSEEK_MODEL:blackboxai/deepseek/deepseek-v4-pro}
+        grok:
+          enabled: ${BLACKBOX_GROK_ENABLED:false}
+          provider-id: blackbox-grok
+          display-name: Blackbox Grok
+          api-key: ${BLACKBOX_GROK_API_KEY:}
+          model: ${BLACKBOX_GROK_MODEL:blackboxai/x-ai/grok-4.3}
     # ── FINAL MODEL STACK ─────────────────────────────────────────────
     # NVIDIA NIM (via OpenAI-compatible adapter) — meta/llama-3.3-70b-instruct (DRAFT)
     nvidia:

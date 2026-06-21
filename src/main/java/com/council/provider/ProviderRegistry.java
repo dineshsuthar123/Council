@@ -4,16 +4,17 @@ import com.council.config.CouncilProperties;
 import com.council.provider.routing.ProviderConcurrencyLimiter;
 import com.council.provider.routing.ProviderDescriptor;
 import com.council.provider.routing.ProviderRole;
+import com.council.provider.blackbox.BlackboxAdapterFactory;
 import com.council.resilience.ProviderCircuitBreaker;
 import com.council.resilience.ProviderCooldownState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -36,9 +37,12 @@ public class ProviderRegistry {
     public ProviderRegistry(List<LlmAdapter> adapterList,
                             ProviderCircuitBreaker circuitBreaker,
                             CouncilProperties properties,
-                            ProviderConcurrencyLimiter concurrencyLimiter) {
-        this.adapters = adapterList.stream()
-                .collect(Collectors.toMap(LlmAdapter::providerName, Function.identity()));
+                            ProviderConcurrencyLimiter concurrencyLimiter,
+                            BlackboxAdapterFactory blackboxAdapterFactory) {
+        Map<String, LlmAdapter> registered = new LinkedHashMap<>();
+        adapterList.forEach(adapter -> registerAdapter(registered, adapter));
+        blackboxAdapterFactory.adapters().forEach(adapter -> registerAdapter(registered, adapter));
+        this.adapters = Map.copyOf(registered);
         this.circuitBreaker = circuitBreaker;
         this.properties = properties;
         this.concurrencyLimiter = concurrencyLimiter;
@@ -50,6 +54,14 @@ public class ProviderRegistry {
         }
 
         log.info("Registered {} provider adapters: {}", adapters.size(), adapters.keySet());
+    }
+
+    private void registerAdapter(Map<String, LlmAdapter> registered, LlmAdapter adapter) {
+        LlmAdapter existing = registered.putIfAbsent(adapter.providerName(), adapter);
+        if (existing != null) {
+            log.warn("Ignoring duplicate provider id '{}' from {}; existing adapter is retained",
+                    adapter.providerName(), adapter.getClass().getSimpleName());
+        }
     }
 
     /**

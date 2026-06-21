@@ -89,7 +89,9 @@ public class ProviderCallExecutor {
 
     private boolean isRetryable(Throwable t) {
         return t instanceof RateLimitException
-                || (t instanceof ProviderException && !(t instanceof JsonNormalizationException));
+                || (t instanceof ProviderException providerException
+                && !(t instanceof JsonNormalizationException)
+                && providerException.getFailureCategory().isRetryable());
     }
 }
 

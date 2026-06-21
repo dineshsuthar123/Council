@@ -1,6 +1,7 @@
 package com.council.provider.openai;
 
 import com.council.common.exception.ProviderException;
+import com.council.common.exception.ProviderFailureCategory;
 import com.council.common.exception.RateLimitException;
 import com.council.config.CouncilProperties;
 import com.council.config.RestClientFactory;
@@ -46,9 +47,9 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
             if (extraHeaders != null) {
                 headers.putAll(extraHeaders);
             }
-            this.restClient = restClientFactory.create(
+            this.restClient = restClientFactory.createWithTimeoutMillis(
                     config.getBaseUrl(),
-                    config.getTimeoutSeconds(),
+                    config.getEffectiveTimeoutMillis(),
                     headers);
         } else {
             this.restClient = null;
@@ -100,10 +101,23 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
                         log.debug("[{}] HTTP 429 Rate-Limited", provider);
                         throw new RateLimitException(provider);
                     })
+                    .onStatus(status -> status.value() == 401 || status.value() == 403, (req, resp) -> {
+                        log.debug("[{}] HTTP {} authentication failure", provider, resp.getStatusCode());
+                        throw new ProviderException(provider,
+                                "Provider authentication failed (HTTP " + resp.getStatusCode().value() + ")",
+                                ProviderFailureCategory.AUTH);
+                    })
                     .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
                         log.debug("[{}] HTTP {} Server Error", provider, resp.getStatusCode());
                         throw new ProviderException(provider,
-                                "Server error " + resp.getStatusCode());
+                                "Provider upstream server error (HTTP " + resp.getStatusCode().value() + ")",
+                                ProviderFailureCategory.NETWORK);
+                    })
+                    .onStatus(HttpStatusCode::is4xxClientError, (req, resp) -> {
+                        log.debug("[{}] HTTP {} client error", provider, resp.getStatusCode());
+                        throw new ProviderException(provider,
+                                "Provider request rejected (HTTP " + resp.getStatusCode().value() + ")",
+                                ProviderFailureCategory.BAD_RESPONSE);
                     })
                     .body(String.class);
 
@@ -116,9 +130,14 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
         } catch (ProviderException e) {
             throw e;
         } catch (ResourceAccessException e) {
-            throw new ProviderException(provider, "Network/timeout error: " + e.getMessage(), e);
+            ProviderFailureCategory category = classifyResourceAccess(e);
+            String message = category == ProviderFailureCategory.TIMEOUT
+                    ? "Provider request timed out"
+                    : "Provider network request failed";
+            throw new ProviderException(provider, message, category, e);
         } catch (Exception e) {
-            throw new ProviderException(provider, "Unexpected error: " + e.getMessage(), e);
+            throw new ProviderException(provider, "Unexpected provider transport failure",
+                    ProviderFailureCategory.UNKNOWN, e);
         }
     }
 
@@ -130,14 +149,27 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
             JsonNode root = mapper.readTree(responseBody);
             JsonNode choices = root.path("choices");
             if (choices.isArray() && !choices.isEmpty()) {
-                return choices.get(0).path("message").path("content").asText("");
+                String content = choices.get(0).path("message").path("content").asText("");
+                if (!content.isBlank()) {
+                    return content;
+                }
+                throw new ProviderException(provider, "Provider returned an empty response",
+                        ProviderFailureCategory.EMPTY_RESPONSE);
             }
-            throw new ProviderException(provider, "No choices in " + provider + " response");
+            throw new ProviderException(provider, "Provider returned no choices",
+                    ProviderFailureCategory.EMPTY_RESPONSE);
         } catch (ProviderException e) {
             throw e;
         } catch (Exception e) {
-            throw new ProviderException(provider,
-                    "Failed to parse " + provider + " response: " + e.getMessage(), e);
+            throw new ProviderException(provider, "Provider returned an invalid response",
+                    ProviderFailureCategory.BAD_RESPONSE, e);
         }
+    }
+
+    protected ProviderFailureCategory classifyResourceAccess(ResourceAccessException error) {
+        String message = error.getMessage() == null ? "" : error.getMessage().toLowerCase(java.util.Locale.ROOT);
+        return message.contains("timed out") || message.contains("timeout")
+                ? ProviderFailureCategory.TIMEOUT
+                : ProviderFailureCategory.NETWORK;
     }
 }

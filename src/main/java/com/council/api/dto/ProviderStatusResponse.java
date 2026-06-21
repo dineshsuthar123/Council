@@ -26,7 +26,12 @@ public record ProviderStatusResponse(
         Integer maxConcurrency,
         Integer availableConcurrencyPermits,
         List<String> fallbackProviders,
-        Boolean availableForRouting
+        Boolean availableForRouting,
+        String displayName,
+        Boolean configured,
+        Boolean available,
+        String baseUrl,
+        String failureReason
 ) {
     /**
      * Compact constructor for legacy (non-routing) usage.
@@ -39,6 +44,23 @@ public record ProviderStatusResponse(
         this(provider, model, enabled, coolingDown, cooldownUntil,
                 consecutive429Count, recentFailureRate, totalSuccesses, totalFailures,
                 lastSuccess, lastFailure,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null,
+                null, null, null, null, null);
+    }
+
+    public ProviderStatusResponse(String provider, String model, boolean enabled,
+                                  boolean coolingDown, String cooldownUntil,
+                                  int consecutive429Count, double recentFailureRate,
+                                  int totalSuccesses, int totalFailures,
+                                  String lastSuccess, String lastFailure,
+                                  List<String> roles, Integer priority, Integer maxConcurrency,
+                                  Integer availableConcurrencyPermits, List<String> fallbackProviders,
+                                  Boolean availableForRouting) {
+        this(provider, model, enabled, coolingDown, cooldownUntil,
+                consecutive429Count, recentFailureRate, totalSuccesses, totalFailures,
+                lastSuccess, lastFailure,
+                roles, priority, maxConcurrency, availableConcurrencyPermits, fallbackProviders,
+                availableForRouting,
+                null, null, null, null, null);
     }
 }

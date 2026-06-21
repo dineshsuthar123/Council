@@ -76,3 +76,30 @@ answer quality, winner confidence, model agreement, and rubric dimensions.
 
 Trace redaction, retention, export outbox, operator auth, and browser smoke test
 expectations are documented in [TRACE_OPERATIONS.md](TRACE_OPERATIONS.md).
+
+## Blackbox AI Provider Family
+
+Blackbox AI is configured as a provider family under
+`council.providers.blackbox`. Each enabled logical model becomes a separate
+Council provider, so it participates independently in drafting, ranking,
+scorecards, traces, circuit breaking, and provider diagnostics.
+
+Start with an entry in `.env` (which is ignored by Git):
+
+```bash
+BLACKBOX_GPT55_ENABLED=true
+BLACKBOX_GPT55_API_KEY=your-key-here
+BLACKBOX_GPT55_MODEL=blackboxai/openai/gpt-5.5
+```
+
+The full placeholder list is in `.env.example`. One Blackbox key can be used
+for multiple logical models, while separate keys may be used for intentional
+quota isolation. Do not use multiple keys or accounts to bypass provider rate
+limits, and never commit a real key.
+
+The model identifiers in the default configuration are examples only. Confirm
+their availability in the Blackbox account/dashboard before enabling them.
+Qwen remains an OpenRouter provider unless it is explicitly available and
+configured in Blackbox. An enabled Blackbox model without a key remains visible
+in provider status as unavailable with `API_KEY_MISSING`; it does not fail app
+startup or receive routed traffic.
