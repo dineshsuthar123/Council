@@ -5,13 +5,17 @@ package com.council.common.exception;
  * Categories deliberately exclude upstream response bodies and credentials.
  */
 public enum ProviderFailureCategory {
+    DISABLED(false),
     API_KEY_MISSING(false),
-    AUTH(false),
-    RATE_LIMIT(true),
+    AUTH_FAILED(false),
+    MODEL_NOT_FOUND_OR_UNAVAILABLE(false),
+    RATE_LIMITED(true),
     TIMEOUT(true),
-    BAD_RESPONSE(false),
+    NETWORK_ERROR(true),
+    BAD_REQUEST(false),
+    BAD_RESPONSE_SCHEMA(false),
     EMPTY_RESPONSE(false),
-    NETWORK(true),
+    CIRCUIT_OPEN(false),
     UNKNOWN(true);
 
     private final boolean retryable;

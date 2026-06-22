@@ -3,6 +3,7 @@ package com.council.orchestrator;
 import com.council.api.dto.FinalResponse;
 import com.council.common.CouncilConstants;
 import com.council.common.CouncilUtils;
+import com.council.common.exception.ProviderFailureCategory;
 import com.council.config.CouncilProperties;
 import com.council.critic.CriticEngine;
 import com.council.events.PipelineEventBroadcaster;
@@ -237,7 +238,9 @@ public class ReasoningOrchestrator {
             if (successfulDrafts.isEmpty()) {
                 String msg = "All providers failed: " + failedProviders;
                 log.error("[orchestrator] {}", msg);
-                FinalResponse response = withResearch(errorResponse(traceId, msg, failedProviders), researchPack);
+                FinalResponse response = withResearch(errorResponse(traceId, msg, failedProviders), researchPack)
+                        .withRunDiagnostics(ProviderRunDiagnostics.from(allDrafts))
+                        .withProviderFailures(ProviderFailureDetails.fromDraftResults(allDrafts));
                 persistTrace(traceId, userQuery, allDrafts, null, null, response, startTime);
                 emitFailure(traceId, "ERROR", msg, startTime, response);
                 return response;
@@ -421,7 +424,9 @@ public class ReasoningOrchestrator {
                     finalQuality.dimensions(),
                     finalQuality.scoreBreakdown())
                     .withResearch(researchPack)
-                    .withInvariants(finalQuality.invariants());
+                    .withInvariants(finalQuality.invariants())
+                    .withRunDiagnostics(ProviderRunDiagnostics.from(traceDrafts))
+                    .withProviderFailures(ProviderFailureDetails.fromDraftResults(traceDrafts));
 
             long totalLatency = System.currentTimeMillis() - startTime;
             metrics.recordTotalLatency(totalLatency);
@@ -558,7 +563,9 @@ public class ReasoningOrchestrator {
             log.warn("[orchestrator] Draft phase interrupted");
             return providers.stream()
                     .map(provider -> DraftResult.failure(provider.providerName(), provider.modelName(),
-                            "Draft generation interrupted", 0))
+                            "Draft generation interrupted", 0,
+                            ProviderFailureDetails.local(provider.providerName(), provider.modelName(),
+                                    ProviderFailureCategory.UNKNOWN, "Draft generation interrupted", 0)))
                     .toList();
         } finally {
             executor.shutdownNow();
@@ -583,7 +590,11 @@ public class ReasoningOrchestrator {
                         provider.providerName(),
                         provider.modelName(),
                         "Draft generation timed out after per-provider deadline",
-                        TimeUnit.SECONDS.toMillis(providerDeadlineSeconds(provider, budget))));
+                        TimeUnit.SECONDS.toMillis(providerDeadlineSeconds(provider, budget)),
+                        ProviderFailureDetails.local(provider.providerName(), provider.modelName(),
+                                ProviderFailureCategory.TIMEOUT,
+                                "Draft generation timed out after per-provider deadline",
+                                TimeUnit.SECONDS.toMillis(providerDeadlineSeconds(provider, budget)))));
                 metrics.recordBudgetStop("provider_deadline_exceeded", budget.taskType().name());
                 metrics.recordDegradedMode("provider_deadline_exceeded");
             }
@@ -606,7 +617,11 @@ public class ReasoningOrchestrator {
             future.cancel(true);
             iterator.remove();
             resultsByProvider.putIfAbsent(provider.providerName(), DraftResult.failure(
-                    provider.providerName(), provider.modelName(), reason, 0));
+                    provider.providerName(), provider.modelName(), reason, 0,
+                    ProviderFailureDetails.local(provider.providerName(), provider.modelName(),
+                            metricReason.contains("deadline") ? ProviderFailureCategory.TIMEOUT
+                                    : ProviderFailureCategory.UNKNOWN,
+                            reason, 0)));
             metrics.recordDegradedMode(metricReason);
         }
     }
@@ -683,7 +698,9 @@ public class ReasoningOrchestrator {
             MDC.remove(CouncilConstants.MDC_TRACE_ID);
             log.warn("[orchestrator] Provider '{}' at max concurrency, skipping", name);
             metrics.recordConcurrencyRejection(name);
-            return DraftResult.failure(name, provider.modelName(), "Max concurrency reached", 0);
+            return DraftResult.failure(name, provider.modelName(), "Max concurrency reached", 0,
+                    ProviderFailureDetails.local(name, provider.modelName(), ProviderFailureCategory.UNKNOWN,
+                            "Local concurrency limit reached before provider invocation", 0));
         }
         try {
             return provider.generateDraft(request);
@@ -700,7 +717,9 @@ public class ReasoningOrchestrator {
         if (future.isCancelled()) {
             log.warn("[orchestrator] Draft provider '{}' timed out after {}s",
                     providerName, draftTimeoutSeconds);
-            return DraftResult.failure(providerName, modelName, "Draft generation timed out", 0);
+            return DraftResult.failure(providerName, modelName, "Draft generation timed out", 0,
+                    ProviderFailureDetails.local(providerName, modelName, ProviderFailureCategory.TIMEOUT,
+                            "Draft generation timed out", 0));
         }
 
         try {
@@ -708,12 +727,16 @@ public class ReasoningOrchestrator {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("[orchestrator] Draft provider '{}' interrupted", providerName);
-            return DraftResult.failure(providerName, modelName, "Draft generation interrupted", 0);
+            return DraftResult.failure(providerName, modelName, "Draft generation interrupted", 0,
+                    ProviderFailureDetails.local(providerName, modelName, ProviderFailureCategory.UNKNOWN,
+                            "Draft generation interrupted", 0));
         } catch (ExecutionException e) {
             String message = rootMessage(e);
             log.warn("[orchestrator] Draft provider '{}' failed: {}", providerName, message);
             return DraftResult.failure(providerName, modelName,
-                    "Draft generation failed: " + message, 0);
+                    "Draft generation failed: " + message, 0,
+                    ProviderFailureDetails.local(providerName, modelName, ProviderFailureCategory.UNKNOWN,
+                            "Draft generation failed", 0));
         }
     }
 

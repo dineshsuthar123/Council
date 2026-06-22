@@ -696,7 +696,8 @@ a {
 .research-panel,
 .invariant-panel,
 .score-explanation-panel,
-.provider-outcome-panel {
+.provider-outcome-panel,
+.run-health-panel {
   padding: 14px 20px 16px;
   border-bottom: 1px solid var(--line);
   background: #ffffff;
@@ -852,6 +853,95 @@ a {
 .provider-outcome-grid {
   display: grid;
   gap: 10px;
+}
+
+.run-health-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  background: #f7fbff;
+}
+
+.run-health-panel.degraded {
+  background: #fffaf0;
+}
+
+.run-health-panel strong {
+  color: var(--navy);
+}
+
+.run-health-panel p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.run-health-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.run-health-metrics span,
+.failure-category,
+.failure-meta {
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.run-health-metrics span {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  background: #ffffff;
+}
+
+.failure-category {
+  display: inline-block;
+  padding: 4px 7px;
+  border-radius: 5px;
+  color: #a83f22;
+  background: #fff0ec;
+}
+
+.failure-meta {
+  display: block;
+  color: var(--subtle);
+}
+
+.excluded-sources {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--panel-soft);
+}
+
+.excluded-sources summary {
+  cursor: pointer;
+  color: var(--navy);
+  font-weight: 800;
+}
+
+.excluded-sources ul {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.excluded-sources li {
+  display: grid;
+  gap: 2px;
+  font-size: 0.82rem;
+}
+
+.excluded-sources li span {
+  color: var(--subtle);
 }
 
 .source-row,
@@ -1272,8 +1362,18 @@ a {
   }
 
   .source-row,
-  .provider-outcome-row {
+  .provider-outcome-row,
+  .run-health-panel {
     grid-template-columns: 1fr;
+  }
+
+  .run-health-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .run-health-metrics {
+    justify-content: flex-start;
   }
 }
 

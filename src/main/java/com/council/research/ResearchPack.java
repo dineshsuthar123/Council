@@ -23,7 +23,8 @@ public record ResearchPack(
         boolean hasInternalTraceSources,
         boolean hasCitationRegistry,
         String researchUnavailableReason,
-        List<String> warnings
+        List<String> warnings,
+        List<ResearchSource> excludedSources
 ) {
     public ResearchPack(boolean required,
                         boolean attempted,
@@ -32,13 +33,32 @@ public record ResearchPack(
                         List<ResearchSource> sources,
                         String errorMessage) {
         this(required, attempted, reason, queries, sources, errorMessage,
-                null, false, false, false, false, null, List.of());
+                null, false, false, false, false, null, List.of(), List.of());
+    }
+
+    public ResearchPack(boolean required,
+                        boolean attempted,
+                        String reason,
+                        List<String> queries,
+                        List<ResearchSource> sources,
+                        String errorMessage,
+                        String originSummary,
+                        boolean hasExternalResearch,
+                        boolean hasPromptProvidedSources,
+                        boolean hasInternalTraceSources,
+                        boolean hasCitationRegistry,
+                        String researchUnavailableReason,
+                        List<String> warnings) {
+        this(required, attempted, reason, queries, sources, errorMessage, originSummary, hasExternalResearch,
+                hasPromptProvidedSources, hasInternalTraceSources, hasCitationRegistry, researchUnavailableReason,
+                warnings, List.of());
     }
 
     public ResearchPack {
         queries = queries == null ? List.of() : List.copyOf(queries);
         sources = sources == null ? List.of() : List.copyOf(sources);
         warnings = warnings == null ? List.of() : List.copyOf(warnings);
+        excludedSources = excludedSources == null ? List.of() : List.copyOf(excludedSources);
         hasExternalResearch = hasExternalResearch || sources.stream()
                 .anyMatch(source -> source.origin() == EvidenceOrigin.EXTERNAL_RESEARCH);
         hasPromptProvidedSources = hasPromptProvidedSources || sources.stream()
@@ -74,7 +94,17 @@ public record ResearchPack(
                                             String researchUnavailableReason,
                                             List<String> warnings) {
         return new ResearchPack(true, true, reason, queries, sources, researchUnavailableReason,
-                null, false, false, false, false, researchUnavailableReason, warnings);
+                null, false, false, false, false, researchUnavailableReason, warnings, List.of());
+    }
+
+    public static ResearchPack withEvidence(String reason,
+                                            List<String> queries,
+                                            List<ResearchSource> sources,
+                                            String researchUnavailableReason,
+                                            List<String> warnings,
+                                            List<ResearchSource> excludedSources) {
+        return new ResearchPack(true, true, reason, queries, sources, researchUnavailableReason,
+                null, false, false, false, false, researchUnavailableReason, warnings, excludedSources);
     }
 
     public boolean hasSources() {

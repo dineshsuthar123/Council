@@ -360,6 +360,8 @@ function renderAnswer(response) {
       ${scoreCard("Winner confidence", winnerConfidence, winnerConfidenceHelper(validDraftCount))}
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
+    ${runHealthPanel(response.runDiagnostics)}
+    ${providerOutcomePanel(response.providerFailures)}
     ${dimensionGrid(response.dimensions)}
     ${invariantPanel(response.invariants)}
     ${researchPanel(response.research)}
@@ -574,6 +576,7 @@ function renderTraceDebug(debug) {
       ${scoreCard("Winner confidence", winnerConfidence, winnerConfidenceHelper(validDraftCount))}
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
+    ${runHealthPanel(debug.runDiagnostics)}
     ${dimensionGrid(debug.dimensions)}
     ${scoreBreakdownPanel(debug.scoreBreakdown)}
     ${invariantPanel(debug.invariantFindings)}
@@ -1029,6 +1032,7 @@ function researchPanel(pack) {
   const sources = Array.isArray(pack.sources) ? pack.sources : [];
   const queries = Array.isArray(pack.queries) ? pack.queries : [];
   const warnings = Array.isArray(pack.warnings) ? pack.warnings : [];
+  const excludedSources = Array.isArray(pack.excludedSources) ? pack.excludedSources : [];
   const origin = pack.originSummary || (pack.hasPromptProvidedSources ? "Prompt-provided evidence" : "External research");
   const statusClass = sources.length ? "up" : "degraded";
   const statusText = sources.length ? `${sources.length} sources attached - ${origin}` : "Research unavailable";
@@ -1058,6 +1062,12 @@ function researchPanel(pack) {
       ? [`${pack.researchUnavailableReason}. Prompt-provided sources were parsed and used.`]
       : [])
   ];
+  const excludedRows = excludedSources.map((source) => `
+    <li>
+      <strong>${escapeHtml(source.id || "S?")} - ${escapeHtml(source.title || source.url || "Untitled source")}</strong>
+      <span>${Math.round(scoreValue(source.relevanceScore) * 100)}% relevance - ${escapeHtml(source.excludedReason || source.relevanceReason || "Below relevance threshold")}</span>
+    </li>
+  `).join("");
 
   return `
     <div class="research-panel" aria-label="Research evidence pack">
@@ -1070,6 +1080,7 @@ function researchPanel(pack) {
       <p class="research-reason">${escapeHtml(pack.reason || "External research was requested.")}</p>
       ${queries.length ? `<div class="query-chips">${queries.map((query) => `<span>${escapeHtml(query)}</span>`).join("")}</div>` : ""}
       ${sources.length ? `<div class="source-list">${sourceRows}</div>` : `<div class="empty-inline">${escapeHtml(pack.errorMessage || "No source evidence was available for this run.")}</div>`}
+      ${excludedSources.length ? `<details class="excluded-sources"><summary>${excludedSources.length} low-relevance external sources excluded from synthesis</summary><ul>${excludedRows}</ul></details>` : ""}
     </div>
   `;
 }
@@ -1086,18 +1097,31 @@ function providerOutcomePanel(draftResults) {
   }
 
   const rows = drafts.map((draft) => {
-    const status = String(draft.status || (draft.errorMessage ? "FAILURE" : "SUCCESS")).toUpperCase();
+    const diagnostics = draft.failureDetails || draft;
+    const status = String(draft.status || (diagnostics.failureCategory || draft.errorMessage ? "FAILURE" : "SUCCESS")).toUpperCase();
     const ok = status === "SUCCESS";
+    const provider = diagnostics.displayName || diagnostics.providerId || draft.provider || "unknown";
+    const category = diagnostics.failureCategory ? humanize(diagnostics.failureCategory) : "Unknown failure";
     const reason = ok
       ? (draft.summary || "Draft succeeded.")
-      : (draft.errorMessage || draft.summary || "Provider failed without a captured reason.");
+      : (diagnostics.safeMessage || draft.errorMessage || draft.summary || "Provider failed without a captured reason.");
+    const retry = diagnostics.retryAttempted
+      ? `retried (${diagnostics.attemptCount || 2} attempts)`
+      : `single attempt (${diagnostics.attemptCount || 1})`;
+    const circuit = diagnostics.circuitBreakerState && diagnostics.circuitBreakerState !== "UNKNOWN"
+      ? `circuit ${diagnostics.circuitBreakerState.toLowerCase()}`
+      : "";
     return `
       <div class="provider-outcome-row">
         <div>
-          <strong><span class="status-dot ${ok ? "up" : "down"}"></span>${escapeHtml(draft.provider || "unknown")}</strong>
-          <small>${escapeHtml(draft.model || "model --")} - ${draft.latencyMs ?? "--"} ms</small>
+          <strong><span class="status-dot ${ok ? "up" : "down"}"></span>${escapeHtml(provider)}</strong>
+          <small>${escapeHtml(diagnostics.providerId || draft.provider || "unknown")} - ${escapeHtml(draft.model || diagnostics.model || "model --")} - ${diagnostics.latencyMs ?? draft.latencyMs ?? "--"} ms</small>
         </div>
-        <p class="${ok ? "" : "failure-reason"}">${escapeHtml(reason)}</p>
+        <div>
+          ${ok ? "" : `<span class="failure-category">${escapeHtml(category)}</span>`}
+          <p class="${ok ? "" : "failure-reason"}">${escapeHtml(reason)}</p>
+          ${ok ? "" : `<small class="failure-meta">${escapeHtml([retry, circuit, diagnostics.httpStatus ? `HTTP ${diagnostics.httpStatus}` : ""].filter(Boolean).join(" - "))}</small>`}
+        </div>
       </div>
     `;
   }).join("");
@@ -1109,6 +1133,39 @@ function providerOutcomePanel(draftResults) {
         <small>Failure reasons and latencies</small>
       </div>
       <div class="provider-outcome-grid">${rows}</div>
+    </div>
+  `;
+}
+
+function humanize(value) {
+  return String(value || "Unknown")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function runHealthPanel(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== "object") {
+    return "";
+  }
+  const coverage = scoreValue(diagnostics.providerCoverage);
+  const health = String(diagnostics.runHealth || "UNKNOWN").toUpperCase();
+  const healthy = health === "HEALTHY";
+  const attempted = Number(diagnostics.attemptedProviders || 0);
+  const valid = Number(diagnostics.validDraftProviders || 0);
+  const reason = diagnostics.degradedRunStatus || "All selected providers returned valid drafts.";
+  return `
+    <div class="run-health-panel ${healthy ? "healthy" : "degraded"}" aria-label="Provider run health">
+      <div>
+        <span class="status-dot ${healthy ? "up" : "down"}"></span>
+        <strong>Run health: ${escapeHtml(humanize(health))}</strong>
+        <p>${escapeHtml(reason)}</p>
+      </div>
+      <div class="run-health-metrics">
+        <span>Provider coverage <strong>${Math.round(coverage * 1000) / 10}%</strong></span>
+        <span>Valid drafts <strong>${valid}/${attempted}</strong></span>
+        <span>Run confidence <strong>${Math.round(scoreValue(diagnostics.runConfidence) * 100)}%</strong></span>
+      </div>
     </div>
   `;
 }

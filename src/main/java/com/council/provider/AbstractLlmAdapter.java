@@ -2,6 +2,7 @@ package com.council.provider;
 
 import com.council.common.CouncilConstants;
 import com.council.common.exception.JsonNormalizationException;
+import com.council.common.exception.ProviderFailureCategory;
 import com.council.common.exception.ProviderException;
 import com.council.config.CouncilProperties;
 import com.council.json.JsonResponseNormalizer;
@@ -12,6 +13,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+
+import java.net.URI;
+import java.time.Instant;
 
 /**
  * Template base class for all LLM adapters.
@@ -87,7 +91,8 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
                 metrics.recordInvalidJson(provider);
             }
             log.warn("[{}] Draft generation failed after {}ms: {}", provider, latency, e.getMessage());
-            return DraftResult.failure(provider, config.getModel(), e.getMessage(), latency);
+            return DraftResult.failure(provider, config.getModel(), safeFailureMessage(e), latency,
+                    failureDetails(e, latency));
         } finally {
             MDC.remove(CouncilConstants.MDC_PROVIDER);
         }
@@ -222,5 +227,63 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
      * </ul>
      */
     protected abstract String callApi(String prompt);
+
+    protected String failureDisplayName() {
+        return provider;
+    }
+
+    private ProviderFailureDetails failureDetails(Exception error, long latencyMs) {
+        ProviderException providerException = findProviderException(error);
+        ProviderFailureCategory category = providerException == null
+                ? (error instanceof JsonNormalizationException
+                ? ProviderFailureCategory.BAD_RESPONSE_SCHEMA : ProviderFailureCategory.UNKNOWN)
+                : providerException.getFailureCategory();
+        return new ProviderFailureDetails(
+                provider,
+                failureDisplayName(),
+                config.getModel(),
+                baseUrlHost(),
+                category,
+                safeFailureMessage(error),
+                providerException == null ? null : providerException.getHttpStatus(),
+                latencyMs,
+                providerException != null && providerException.isRetryAttempted(),
+                providerException == null ? 1 : providerException.getAttemptCount(),
+                providerException != null && providerException.isCircuitOpen() ? "OPEN" : "CLOSED",
+                Instant.now().toString());
+    }
+
+    private ProviderException findProviderException(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof ProviderException providerException) {
+                return providerException;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private String safeFailureMessage(Exception error) {
+        if (error instanceof JsonNormalizationException) {
+            return "Provider returned a response that could not be normalized";
+        }
+        if (error instanceof ProviderException providerException) {
+            return providerException.getMessage();
+        }
+        return "Provider request failed";
+    }
+
+    private String baseUrlHost() {
+        String baseUrl = config.getBaseUrl();
+        if (baseUrl == null || baseUrl.isBlank()) {
+            return null;
+        }
+        try {
+            return URI.create(baseUrl).getHost();
+        } catch (IllegalArgumentException ignored) {
+            return "configured";
+        }
+    }
 }
 

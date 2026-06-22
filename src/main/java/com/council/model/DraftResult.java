@@ -23,22 +23,34 @@ public record DraftResult(
         double confidence,
         long latencyMs,
         String rawResponse,
-        String errorMessage
+        String errorMessage,
+        ProviderFailureDetails failureDetails
 ) {
+    public DraftResult(String provider, String model, ProviderResultStatus status, String answer, String summary,
+                       List<String> assumptions, List<String> uncertainties, double confidence, long latencyMs,
+                       String rawResponse, String errorMessage) {
+        this(provider, model, status, answer, summary, assumptions, uncertainties, confidence, latencyMs,
+                rawResponse, errorMessage, null);
+    }
     public static DraftResult success(String provider, String model,
                                       String answer, String summary,
                                       List<String> assumptions, List<String> uncertainties,
                                       double confidence, long latencyMs, String rawResponse) {
         return new DraftResult(provider, model, ProviderResultStatus.SUCCESS,
                 answer, summary, assumptions, uncertainties,
-                CouncilUtils.clamp01(confidence), latencyMs, rawResponse, null);
+                CouncilUtils.clamp01(confidence), latencyMs, rawResponse, null, null);
     }
 
     public static DraftResult failure(String provider, String model,
                                       String errorMessage, long latencyMs) {
+        return failure(provider, model, errorMessage, latencyMs, null);
+    }
+
+    public static DraftResult failure(String provider, String model, String errorMessage, long latencyMs,
+                                      ProviderFailureDetails failureDetails) {
         return new DraftResult(provider, model, ProviderResultStatus.FAILURE,
                 null, null, List.of(), List.of(),
-                0.0, latencyMs, null, errorMessage);
+                0.0, latencyMs, null, errorMessage, failureDetails);
     }
 
     public boolean isSuccess() {

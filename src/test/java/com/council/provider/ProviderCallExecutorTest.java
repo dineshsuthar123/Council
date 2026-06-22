@@ -1,6 +1,7 @@
 package com.council.provider;
 
 import com.council.common.exception.ProviderException;
+import com.council.common.exception.ProviderFailureCategory;
 import com.council.common.exception.RateLimitException;
 import com.council.config.CouncilProperties;
 import com.council.metrics.OrchestrationMetrics;
@@ -53,16 +54,19 @@ class ProviderCallExecutorTest {
 
         ProviderException ex = assertThrows(ProviderException.class,
                 () -> executor.execute("gemini", neverCalled));
-        assertTrue(ex.getMessage().contains("cooldown"));
+        assertEquals(ProviderFailureCategory.CIRCUIT_OPEN, ex.getFailureCategory());
+        assertTrue(ex.isCircuitOpen());
     }
 
     @Test
     @DisplayName("ProviderException is propagated after retries exhausted")
     void providerException_propagated() {
-        assertThrows(ProviderException.class,
+        ProviderException exception = assertThrows(ProviderException.class,
                 () -> executor.execute("deepseek", () -> {
                     throw new ProviderException("deepseek", "Server error 500");
                 }));
+        assertEquals(2, exception.getAttemptCount());
+        assertTrue(exception.isRetryAttempted());
     }
 
     @Test

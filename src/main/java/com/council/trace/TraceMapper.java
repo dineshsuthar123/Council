@@ -63,6 +63,7 @@ public class TraceMapper {
             entity.setAnswerQuality(response.answerQuality() == null ? response.confidence() : response.answerQuality());
             entity.setWinnerConfidence(response.winnerConfidence());
             entity.setModelAgreement(response.modelAgreement());
+            entity.setRunDiagnostics(toJson(response.runDiagnostics()));
             entity.setScoreDimensions(toJson(response.dimensions()));
             entity.setScoreBreakdown(toJson(response.scoreBreakdown()));
             entity.setResearchContext(toJson(response.research()));
@@ -92,6 +93,7 @@ public class TraceMapper {
                 e.getAnswerQuality(),
                 e.getWinnerConfidence(),
                 e.getModelAgreement(),
+                e.getRunDiagnostics(),
                 e.getScoreDimensions(),
                 e.getScoreBreakdown(),
                 e.getResearchContext(),
@@ -133,6 +135,7 @@ public class TraceMapper {
                 e.getAnswerQuality(),
                 e.getWinnerConfidence(),
                 e.getModelAgreement(),
+                e.getRunDiagnostics(),
                 e.getScoreDimensions(),
                 e.getScoreBreakdown(),
                 e.getResearchContext(),

@@ -65,25 +65,28 @@ class BlackboxAdapterTest {
     void classifiesAuthRateLimitAndEmptyResponsesWithoutLeakingCredential() throws Exception {
         String authEndpoint = startServer(401, "{\"error\":\"ignored\"}", new AtomicReference<>(), new AtomicReference<>());
         ProviderException auth = assertThrows(ProviderException.class, () -> adapter(authEndpoint).invoke("prompt"));
-        assertEquals(ProviderFailureCategory.AUTH, auth.getFailureCategory());
+        assertEquals(ProviderFailureCategory.AUTH_FAILED, auth.getFailureCategory());
+        assertEquals(401, auth.getHttpStatus());
         assertFalse(auth.getMessage().contains(TEST_CREDENTIAL));
 
         stopServer();
         String forbiddenEndpoint = startServer(403, "{\"error\":\"ignored\"}", new AtomicReference<>(), new AtomicReference<>());
         ProviderException forbidden = assertThrows(ProviderException.class,
                 () -> adapter(forbiddenEndpoint).invoke("prompt"));
-        assertEquals(ProviderFailureCategory.AUTH, forbidden.getFailureCategory());
+        assertEquals(ProviderFailureCategory.AUTH_FAILED, forbidden.getFailureCategory());
+        assertEquals(403, forbidden.getHttpStatus());
 
         stopServer();
         String rateLimitEndpoint = startServer(429, "{\"error\":\"ignored\"}", new AtomicReference<>(), new AtomicReference<>());
         RateLimitException rateLimit = assertThrows(RateLimitException.class,
                 () -> adapter(rateLimitEndpoint).invoke("prompt"));
-        assertEquals(ProviderFailureCategory.RATE_LIMIT, rateLimit.getFailureCategory());
+        assertEquals(ProviderFailureCategory.RATE_LIMITED, rateLimit.getFailureCategory());
+        assertEquals(429, rateLimit.getHttpStatus());
 
         stopServer();
         String emptyEndpoint = startServer(200, "{\"choices\":[]}", new AtomicReference<>(), new AtomicReference<>());
         ProviderException empty = assertThrows(ProviderException.class, () -> adapter(emptyEndpoint).invoke("prompt"));
-        assertEquals(ProviderFailureCategory.EMPTY_RESPONSE, empty.getFailureCategory());
+        assertEquals(ProviderFailureCategory.BAD_RESPONSE_SCHEMA, empty.getFailureCategory());
         assertFalse(empty.getMessage().contains(TEST_CREDENTIAL));
     }
 
@@ -93,13 +96,46 @@ class BlackboxAdapterTest {
 
         assertEquals(ProviderFailureCategory.TIMEOUT,
                 adapter.classify(new ResourceAccessException("read timed out")));
-        assertEquals(ProviderFailureCategory.NETWORK,
+        assertEquals(ProviderFailureCategory.NETWORK_ERROR,
                 adapter.classify(new ResourceAccessException("connection refused")));
 
         ProviderException sanitized = new ProviderException("blackbox-gpt55",
                 "request failed with Bearer " + TEST_CREDENTIAL, ProviderFailureCategory.UNKNOWN);
         assertFalse(sanitized.getMessage().contains(TEST_CREDENTIAL));
         assertTrue(sanitized.getMessage().contains("[REDACTED]"));
+    }
+
+    @Test
+    void classifiesModelUnavailableBadRequestAndEmptyContent() throws Exception {
+        String missingModelEndpoint = startServer(404, "{\"error\":\"model not found\"}",
+                new AtomicReference<>(), new AtomicReference<>());
+        ProviderException missingModel = assertThrows(ProviderException.class,
+                () -> adapter(missingModelEndpoint).invoke("prompt"));
+        assertEquals(ProviderFailureCategory.MODEL_NOT_FOUND_OR_UNAVAILABLE, missingModel.getFailureCategory());
+        assertEquals(404, missingModel.getHttpStatus());
+
+        stopServer();
+        String badRequestEndpoint = startServer(400, "{\"error\":\"invalid model\"}",
+                new AtomicReference<>(), new AtomicReference<>());
+        ProviderException badRequest = assertThrows(ProviderException.class,
+                () -> adapter(badRequestEndpoint).invoke("prompt"));
+        assertEquals(ProviderFailureCategory.BAD_REQUEST, badRequest.getFailureCategory());
+        assertEquals(400, badRequest.getHttpStatus());
+
+        stopServer();
+        String unavailableModelEndpoint = startServer(400, "{\"error\":\"model not found\"}",
+                new AtomicReference<>(), new AtomicReference<>());
+        ProviderException unavailableModel = assertThrows(ProviderException.class,
+                () -> adapter(unavailableModelEndpoint).invoke("prompt"));
+        assertEquals(ProviderFailureCategory.MODEL_NOT_FOUND_OR_UNAVAILABLE,
+                unavailableModel.getFailureCategory());
+
+        stopServer();
+        String emptyContentEndpoint = startServer(200, "{\"choices\":[{\"message\":{\"content\":\"\"}}]}",
+                new AtomicReference<>(), new AtomicReference<>());
+        ProviderException emptyContent = assertThrows(ProviderException.class,
+                () -> adapter(emptyContentEndpoint).invoke("prompt"));
+        assertEquals(ProviderFailureCategory.EMPTY_RESPONSE, emptyContent.getFailureCategory());
     }
 
     private String startServer(int status,

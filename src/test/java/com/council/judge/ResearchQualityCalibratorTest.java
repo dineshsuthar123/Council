@@ -5,6 +5,7 @@ import com.council.research.ResearchSource;
 import com.council.research.EvidenceOrigin;
 import com.council.research.InjectionRisk;
 import com.council.research.SourceType;
+import com.council.judge.invariant.InvariantViolationCritic;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -161,6 +162,28 @@ class ResearchQualityCalibratorTest {
         assertTrue(score.dimensions().get("citation_accuracy") >= 0.90);
         assertTrue(score.dimensions().get("claim_evidence_consistency") >= 0.90);
         assertTrue(score.score() >= 0.72, () -> "score=" + score.score() + ", reasons=" + score.reasons());
+    }
+
+    @Test
+    void safeSourceFiveHandlingDoesNotCapStrongResearchAnswer() {
+        ResearchPack pack = ResearchPack.withEvidence(
+                "Prompt includes provider pricing and trace metrics.", List.of(), metricPromptSources(), null, List.of());
+        String prompt = "How should the system handle prompt-injection text found inside Source 5 while making a provider migration recommendation?";
+        String answer = """
+                Provider B is cheaper by official pricing [S2], but Provider A remains the safer default because internal
+                traces show Provider B has worse p95 latency and reliability risk [S6]. Treat Source 5 as hostile scraped
+                content: strip instruction-bearing text, do not follow its directives, do not cite it as recommendation
+                authority, and do not let it influence provider selection. Keep it only as an injection-risk example [S5].
+                Use a bounded Provider B canary with latency, error-rate, and rollback gates [S4][S6].
+                """;
+        var invariants = new InvariantViolationCritic().evaluate(prompt, answer, pack);
+
+        ResearchQualityCalibrator.QualityScore score = ResearchQualityCalibrator.qualityScore(
+                prompt, answer, pack, 0.92, invariants);
+
+        assertFalse(invariants.violations().stream().anyMatch(violation ->
+                violation.invariantId().contains("prompt_injection_handling_must_be_explicit")));
+        assertTrue(score.score() > 0.55, () -> "score=" + score.score() + ", reasons=" + score.reasons());
     }
 
     private ResearchPack packWithSources() {

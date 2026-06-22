@@ -41,7 +41,8 @@ public class BlackboxOpenAiCompatibleAdapter extends OpenAiCompatibleAdapter imp
                 callExecutor, metrics, restClientFactory, Map.of());
         this.logicalConfig = logicalConfig;
         if (!hasApiKey()) {
-            latestFailure.set(ProviderFailureCategory.API_KEY_MISSING);
+            latestFailure.set(logicalConfig.isEnabled()
+                    ? ProviderFailureCategory.API_KEY_MISSING : ProviderFailureCategory.DISABLED);
         }
     }
 
@@ -66,6 +67,10 @@ public class BlackboxOpenAiCompatibleAdapter extends OpenAiCompatibleAdapter imp
 
     @Override
     protected String callApi(String prompt) {
+        if (!isLogicalEnabled()) {
+            latestFailure.set(ProviderFailureCategory.DISABLED);
+            throw new ProviderException(provider, "Provider is disabled", ProviderFailureCategory.DISABLED);
+        }
         if (!hasApiKey()) {
             latestFailure.set(ProviderFailureCategory.API_KEY_MISSING);
             throw new ProviderException(provider, "API key not configured", ProviderFailureCategory.API_KEY_MISSING);
@@ -84,11 +89,12 @@ public class BlackboxOpenAiCompatibleAdapter extends OpenAiCompatibleAdapter imp
     public ProviderStatusDetails providerStatusDetails() {
         boolean configured = hasApiKey();
         ProviderFailureCategory failure = latestFailure.get();
-        boolean available = logicalConfig.isEnabled() && configured && failure == null;
+        boolean enabled = isLogicalEnabled();
+        boolean available = enabled && configured && failure == null;
         return new ProviderStatusDetails(
                 logicalConfig.getDisplayName(),
                 configured,
-                logicalConfig.isEnabled(),
+                enabled,
                 available,
                 config.getBaseUrl(),
                 failure == null ? null : failure.name()
@@ -97,5 +103,15 @@ public class BlackboxOpenAiCompatibleAdapter extends OpenAiCompatibleAdapter imp
 
     private boolean hasApiKey() {
         return logicalConfig.getApiKey() != null && !logicalConfig.getApiKey().isBlank();
+    }
+
+    @Override
+    protected String failureDisplayName() {
+        return logicalConfig.getDisplayName() == null || logicalConfig.getDisplayName().isBlank()
+                ? provider : logicalConfig.getDisplayName();
+    }
+
+    private boolean isLogicalEnabled() {
+        return logicalConfig.isEnabled() || hasApiKey();
     }
 }

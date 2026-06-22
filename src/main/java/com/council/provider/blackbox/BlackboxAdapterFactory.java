@@ -83,12 +83,17 @@ public class BlackboxAdapterFactory {
         List<LlmAdapter> created = new ArrayList<>();
 
         for (BlackboxProviderProperties.ModelConfig modelConfig : blackboxProperties.getModels().values()) {
-            if (!modelConfig.isEnabled()) {
+            String apiKey = modelConfig.getApiKey();
+            boolean hasKey = apiKey != null && !apiKey.isBlank();
+            // A non-empty API key acts as an implicit enable — BLACKBOX_*_ENABLED=true is not required.
+            // Skip only when explicitly disabled AND no key is present.
+            // Models with enabled=true and no key remain registered for status/diagnostic display.
+            if (!modelConfig.isEnabled() && !hasKey) {
                 continue;
             }
             if (modelConfig.getProviderId() == null || modelConfig.getProviderId().isBlank()
                     || modelConfig.getModel() == null || modelConfig.getModel().isBlank()) {
-                log.warn("Ignoring invalid enabled Blackbox provider configuration: provider id and model are required");
+                log.warn("Ignoring invalid Blackbox provider configuration: provider id and model are required");
                 continue;
             }
             if (!providerIds.add(modelConfig.getProviderId())) {
@@ -116,7 +121,9 @@ public class BlackboxAdapterFactory {
     private CouncilProperties.ProviderConfig toProviderConfig(BlackboxProviderProperties.ModelConfig modelConfig) {
         BlackboxProviderProperties.Defaults defaults = blackboxProperties.getDefaults();
         CouncilProperties.ProviderConfig config = new CouncilProperties.ProviderConfig();
-        config.setEnabled(modelConfig.isEnabled());
+        // Enabled when explicitly enabled OR when a key is present (key acts as implicit opt-in).
+        boolean hasKey = modelConfig.getApiKey() != null && !modelConfig.getApiKey().isBlank();
+        config.setEnabled(modelConfig.isEnabled() || hasKey);
         config.setApiKey(modelConfig.getApiKey());
         config.setBaseUrl(blackboxProperties.getBaseUrl());
         config.setModel(modelConfig.getModel());

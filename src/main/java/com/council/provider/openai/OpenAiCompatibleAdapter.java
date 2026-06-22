@@ -17,6 +17,9 @@ import org.springframework.http.MediaType;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -78,7 +81,8 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
     @Override
     protected String callApi(String prompt) {
         if (restClient == null) {
-            throw new ProviderException(provider, provider + " adapter is not configured");
+            throw new ProviderException(provider, provider + " adapter is not configured",
+                    ProviderFailureCategory.DISABLED);
         }
         try {
             Map<String, Object> body = buildRequestBody(prompt);
@@ -105,19 +109,38 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
                         log.debug("[{}] HTTP {} authentication failure", provider, resp.getStatusCode());
                         throw new ProviderException(provider,
                                 "Provider authentication failed (HTTP " + resp.getStatusCode().value() + ")",
-                                ProviderFailureCategory.AUTH);
+                                ProviderFailureCategory.AUTH_FAILED, resp.getStatusCode().value(), null);
+                    })
+                    .onStatus(status -> status.value() == 404, (req, resp) -> {
+                        log.debug("[{}] HTTP 404 model or endpoint unavailable", provider);
+                        throw new ProviderException(provider,
+                                "Provider model or endpoint is unavailable (HTTP 404)",
+                                ProviderFailureCategory.MODEL_NOT_FOUND_OR_UNAVAILABLE,
+                                resp.getStatusCode().value(), null);
+                    })
+                    .onStatus(status -> status.value() == 400, (req, resp) -> {
+                        boolean modelUnavailable = responseIndicatesModelUnavailable(resp.getBody());
+                        ProviderFailureCategory category = modelUnavailable
+                                ? ProviderFailureCategory.MODEL_NOT_FOUND_OR_UNAVAILABLE
+                                : ProviderFailureCategory.BAD_REQUEST;
+                        String message = modelUnavailable
+                                ? "Provider model is unavailable (HTTP 400)"
+                                : "Provider request rejected (HTTP 400)";
+                        log.debug("[{}] HTTP 400 {}", provider,
+                                modelUnavailable ? "model unavailable" : "bad request");
+                        throw new ProviderException(provider, message, category, 400, null);
                     })
                     .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
                         log.debug("[{}] HTTP {} Server Error", provider, resp.getStatusCode());
                         throw new ProviderException(provider,
                                 "Provider upstream server error (HTTP " + resp.getStatusCode().value() + ")",
-                                ProviderFailureCategory.NETWORK);
+                                ProviderFailureCategory.NETWORK_ERROR, resp.getStatusCode().value(), null);
                     })
                     .onStatus(HttpStatusCode::is4xxClientError, (req, resp) -> {
                         log.debug("[{}] HTTP {} client error", provider, resp.getStatusCode());
                         throw new ProviderException(provider,
                                 "Provider request rejected (HTTP " + resp.getStatusCode().value() + ")",
-                                ProviderFailureCategory.BAD_RESPONSE);
+                                ProviderFailureCategory.BAD_REQUEST, resp.getStatusCode().value(), null);
                     })
                     .body(String.class);
 
@@ -157,12 +180,12 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
                         ProviderFailureCategory.EMPTY_RESPONSE);
             }
             throw new ProviderException(provider, "Provider returned no choices",
-                    ProviderFailureCategory.EMPTY_RESPONSE);
+                    ProviderFailureCategory.BAD_RESPONSE_SCHEMA);
         } catch (ProviderException e) {
             throw e;
         } catch (Exception e) {
             throw new ProviderException(provider, "Provider returned an invalid response",
-                    ProviderFailureCategory.BAD_RESPONSE, e);
+                    ProviderFailureCategory.BAD_RESPONSE_SCHEMA, e);
         }
     }
 
@@ -170,6 +193,20 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
         String message = error.getMessage() == null ? "" : error.getMessage().toLowerCase(java.util.Locale.ROOT);
         return message.contains("timed out") || message.contains("timeout")
                 ? ProviderFailureCategory.TIMEOUT
-                : ProviderFailureCategory.NETWORK;
+                : ProviderFailureCategory.NETWORK_ERROR;
+    }
+
+    private boolean responseIndicatesModelUnavailable(InputStream body) {
+        if (body == null) {
+            return false;
+        }
+        try {
+            byte[] bytes = body.readNBytes(1024);
+            String text = new String(bytes, StandardCharsets.UTF_8).toLowerCase(java.util.Locale.ROOT);
+            return text.contains("model not found") || text.contains("model unavailable")
+                    || text.contains("model is not available") || text.contains("unknown model");
+        } catch (IOException ignored) {
+            return false;
+        }
     }
 }

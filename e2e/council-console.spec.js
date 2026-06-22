@@ -117,6 +117,9 @@ test("prompt submission renders structured answer, score cards, code, and source
   await expect(page.locator(".score-card").filter({ hasText: "Answer quality" })).toBeVisible();
   await expect(page.locator(".score-card").filter({ hasText: "Model agreement" })).toBeVisible();
   await expect(page.getByText("N/A")).toBeVisible();
+  await expect(page.getByText("Run health: Degraded")).toBeVisible();
+  await expect(page.getByText("Provider coverage")).toBeVisible();
+  await expect(page.getByText("Provider outcomes")).toBeVisible();
   await expect(page.getByText("Quality dimensions")).toBeVisible();
   await expect(page.getByText("No source pack was available")).toBeVisible();
   await expect(page.locator("pre.code-block")).toContainText("cached == DELETED");
@@ -138,6 +141,7 @@ test("admin unlock shows provider failures, trace list, and trace detail scoring
   await expect(page.getByRole("heading", { name: /11111111/ })).toBeVisible();
   await expect(page.getByText("Provider outcomes")).toBeVisible();
   await expect(page.getByText("Timed out at 20s deadline")).toBeVisible();
+  await expect(page.getByText("Timeout")).toBeVisible();
   await expect(page.getByText("Winner confidence")).toBeVisible();
   await expect(page.getByText("Only one valid draft was available; this is selection certainty")).toBeVisible();
 });
@@ -171,6 +175,15 @@ return singleflight(alias, () -> primaryDb.findByAlias(alias));
     answerQuality: 0.86,
     winnerConfidence: 0.95,
     modelAgreement: null,
+    runDiagnostics: {
+      attemptedProviders: 3,
+      validDraftProviders: 1,
+      providerCoverage: 0.3333,
+      runHealth: "DEGRADED",
+      runConfidence: 0.3333,
+      degradedRunStatus: "Only 1 of 3 selected providers produced valid drafts."
+    },
+    providerFailures: [timeoutFailure()],
     dimensions: {
       correct_endpoint_decision: 0.92,
       deletion_safety: 0.84,
@@ -219,12 +232,30 @@ function traceDebug() {
           model: "nemotron",
           status: "FAILURE",
           errorMessage: "Timed out at 20s deadline",
-          latencyMs: 20000
+          latencyMs: 20000,
+          failureDetails: {
+            ...timeoutFailure()
+          }
         }
       ]
     },
     researchContext: finalResponse().research,
     invariantFindings: finalResponse().invariants
+  };
+}
+
+function timeoutFailure() {
+  return {
+    providerId: "nvidia",
+    displayName: "NVIDIA Nemotron",
+    model: "nemotron",
+    baseUrlHost: "integrate.api.nvidia.com",
+    failureCategory: "TIMEOUT",
+    safeMessage: "Timed out at 20s deadline",
+    latencyMs: 20000,
+    retryAttempted: true,
+    attemptCount: 2,
+    circuitBreakerState: "CLOSED"
   };
 }
 

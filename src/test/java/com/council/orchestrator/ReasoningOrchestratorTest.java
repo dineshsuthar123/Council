@@ -369,6 +369,8 @@ class ReasoningOrchestratorTest {
                 new InvariantViolationCritic().evaluate(query, strongAnswer, response.research()));
         assertTrue(strongScore.score() > weakScore.score(),
                 () -> "strong=" + strongScore.score() + ", weak=" + weakScore.score());
+        assertTrue(strongScore.score() >= 0.80,
+                () -> "Safe Source 5 handling must not be reduced to a 55% answer: " + strongScore.score());
     }
 
     /* ── Single provider success ───────────────────────────────────── */

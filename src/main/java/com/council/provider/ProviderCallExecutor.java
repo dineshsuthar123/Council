@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Encapsulates retry + circuit-breaker logic for provider HTTP calls.
@@ -46,13 +47,16 @@ public class ProviderCallExecutor {
      */
     public String execute(String provider, Callable<String> apiCall) {
         if (circuitBreaker.isInCooldown(provider)) {
-            throw new ProviderException(provider, "Provider is in cooldown");
+            throw new ProviderException(provider, "Provider circuit breaker is open",
+                    com.council.common.exception.ProviderFailureCategory.CIRCUIT_OPEN).asCircuitOpen();
         }
 
         Retry retry = retryCache.computeIfAbsent(provider, this::buildRetry);
+        AtomicInteger attempts = new AtomicInteger();
 
         try {
             String result = Retry.decorateCheckedSupplier(retry, () -> {
+                attempts.incrementAndGet();
                 try {
                     return apiCall.call();
                 } catch (RateLimitException e) {
@@ -72,9 +76,10 @@ public class ProviderCallExecutor {
             circuitBreaker.recordSuccess(provider);
             return result;
         } catch (ProviderException e) {
-            throw e;
+            throw e.withAttemptMetadata(attempts.get());
         } catch (Throwable t) {
-            throw new ProviderException(provider, "Unexpected error: " + t.getMessage(), t);
+            throw new ProviderException(provider, "Unexpected provider execution failure", t)
+                    .withAttemptMetadata(attempts.get());
         }
     }
 

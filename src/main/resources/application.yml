@@ -86,7 +86,7 @@ council:
           provider-id: blackbox-gpt55-pro
           display-name: Blackbox GPT-5.5 Pro
           api-key: ${BLACKBOX_GPT55_PRO_API_KEY:}
-          model: ${BLACKBOX_GPT55_PRO_MODEL:blackboxai/openai/gpt-5.5-pro}
+          model: ${BLACKBOX_GPT55_PRO_MODEL:blackboxai/openai/gpt-5.4-pro}
         claude-sonnet:
           enabled: ${BLACKBOX_CLAUDE_SONNET_ENABLED:false}
           provider-id: blackbox-claude-sonnet
@@ -104,13 +104,13 @@ council:
           provider-id: blackbox-gemini
           display-name: Blackbox Gemini Flash
           api-key: ${BLACKBOX_GEMINI_API_KEY:}
-          model: ${BLACKBOX_GEMINI_MODEL:blackboxai/google/gemini-3.5-flash}
+          model: ${BLACKBOX_GEMINI_MODEL:blackboxai/google/gemini-3.1-flash-lite}
         gemini-pro:
           enabled: ${BLACKBOX_GEMINI_PRO_ENABLED:false}
           provider-id: blackbox-gemini-pro
           display-name: Blackbox Gemini Pro
           api-key: ${BLACKBOX_GEMINI_PRO_API_KEY:}
-          model: ${BLACKBOX_GEMINI_PRO_MODEL:blackboxai/google/gemini-3.1-pro-preview}
+          model: ${BLACKBOX_GEMINI_PRO_MODEL:blackboxai/google/nano-banana-pro}
         nemotron:
           enabled: ${BLACKBOX_NEMOTRON_ENABLED:false}
           provider-id: blackbox-nemotron
@@ -122,7 +122,7 @@ council:
           provider-id: blackbox-deepseek
           display-name: Blackbox DeepSeek
           api-key: ${BLACKBOX_DEEPSEEK_API_KEY:}
-          model: ${BLACKBOX_DEEPSEEK_MODEL:blackboxai/deepseek/deepseek-v4-pro}
+          model: ${BLACKBOX_DEEPSEEK_MODEL:blackboxai/deepseek/deepseek-v4-flash}
         grok:
           enabled: ${BLACKBOX_GROK_ENABLED:false}
           provider-id: blackbox-grok
@@ -132,7 +132,7 @@ council:
     # ── FINAL MODEL STACK ─────────────────────────────────────────────
     # NVIDIA NIM (via OpenAI-compatible adapter) — meta/llama-3.3-70b-instruct (DRAFT)
     nvidia:
-      enabled: true
+      enabled: false
       api-key: ${NVIDIA_LLAMA_API_KEY:}
       base-url: https://integrate.api.nvidia.com/v1
       model: meta/llama-3.3-70b-instruct
@@ -150,7 +150,7 @@ council:
       max-tokens: 8192
     # OpenRouter — nvidia/llama-3.1-nemotron-70b-instruct (CRITIC)
     openrouter:
-      enabled: true
+      enabled: false
       api-key: ${OPENROUTER_NEMOTRON_API_KEY:}
       base-url: https://openrouter.ai/api
       model: nvidia/llama-3.1-nemotron-70b-instruct
@@ -159,7 +159,7 @@ council:
       max-tokens: 4096
     # OpenRouter — qwen/qwen-2.5-72b-instruct (DRAFT)
     openrouter-qwen:
-      enabled: true
+      enabled: false
       api-key: ${OPENROUTER_QWEN_API_KEY:}
       base-url: https://openrouter.ai/api
       model: qwen/qwen-2.5-72b-instruct
@@ -185,7 +185,7 @@ council:
       reliability: 0.85
       max-tokens: 4096
     groq:
-      enabled: true
+      enabled: false
       api-key: ${GROQ_API_KEY:}
       base-url: https://api.groq.com/openai
       model: llama-3.3-70b-versatile
@@ -209,7 +209,7 @@ council:
       reliability: 0.82
       max-tokens: 4096
     gemini:
-      enabled: true
+      enabled: false
       api-key: ${GEMINI_API_KEY:}
       base-url: https://generativelanguage.googleapis.com
       model: gemini-2.5-flash
@@ -233,7 +233,7 @@ council:
       reliability: 0.60
       max-tokens: 2048
     claude:
-      enabled: true
+      enabled: false
       api-key: ${CLAUDE_API_KEY:}
       base-url: https://api.blackbox.ai
       model: blackboxai/anthropic/claude-sonnet-4.6
@@ -241,13 +241,13 @@ council:
       reliability: 0.90
       max-tokens: 4096
 
-  # Critic → OpenRouter Nemotron
+  # Critic → Blackbox Nemotron (strong evaluation model)
   critic:
-    provider: openrouter
+    provider: blackbox-nemotron
 
-  # Synthesizer → OpenRouter Nemotron
+  # Synthesizer → Blackbox Claude Sonnet
   synthesizer:
-    provider: openrouter
+    provider: blackbox-claude-sonnet
 
   orchestrator:
     max-retries: 2
@@ -314,7 +314,7 @@ council:
 
   routing:
     enabled: true
-    max-draft-providers: 3
+    max-draft-providers: 6
     max-escalation-providers: 1
     escalation-confidence-threshold: 0.45
     escalation-contradiction-threshold: 0.70
@@ -359,3 +359,52 @@ council:
         priority: 12
         max-concurrency: 1
         fallback-providers: [openrouter, gemini]
+      # ── Blackbox AI — Draft providers (verified-working first) ────────────
+      # Tier 1: confirmed reliable in live key test
+      blackbox-claude-opus:
+        display-name: Blackbox Claude Opus
+        roles: [DRAFT, PREMIUM_ESCALATION]
+        priority: 1
+        max-concurrency: 1
+      blackbox-claude-sonnet:
+        display-name: Blackbox Claude Sonnet
+        roles: [DRAFT, BASELINE]
+        priority: 2
+        max-concurrency: 1
+      blackbox-gemini:
+        display-name: Blackbox Gemini Flash
+        roles: [DRAFT]
+        priority: 3
+        max-concurrency: 2
+      blackbox-gpt55:
+        display-name: Blackbox GPT-5.5
+        roles: [DRAFT]
+        priority: 4
+        max-concurrency: 2
+      # Tier 2: mostly working / intermittent
+      blackbox-nemotron:
+        display-name: Blackbox Nemotron (Critic/Draft)
+        roles: [DRAFT, CRITIC, BASELINE]
+        priority: 5
+        max-concurrency: 1
+      blackbox-gpt55-pro:
+        display-name: Blackbox GPT-5.5 Pro
+        roles: [DRAFT]
+        priority: 6
+        max-concurrency: 2
+      # Tier 3: unreliable / server errors — low priority fallbacks
+      blackbox-deepseek:
+        display-name: Blackbox DeepSeek V4 Flash
+        roles: [DRAFT]
+        priority: 7
+        max-concurrency: 1
+      blackbox-gemini-pro:
+        display-name: Blackbox Gemini Pro
+        roles: [DRAFT]
+        priority: 8
+        max-concurrency: 1
+      blackbox-grok:
+        display-name: Blackbox Grok
+        roles: [DRAFT]
+        priority: 9
+        max-concurrency: 1
