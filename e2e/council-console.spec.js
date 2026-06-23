@@ -120,6 +120,11 @@ test("prompt submission renders structured answer, score cards, code, and source
   await expect(page.getByText("Run health: Degraded")).toBeVisible();
   await expect(page.getByText("Provider coverage")).toBeVisible();
   await expect(page.getByText("Provider outcomes")).toBeVisible();
+  await expect(page.getByText("Used / valid drafts")).toBeVisible();
+  await expect(page.getByText("Failed attempts")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Skipped" })).toBeVisible();
+  await expect(page.getByText(/Skipped: early stop after valid draft confidence/)).toBeVisible();
+  await expect(page.getByText("not attempted")).toBeVisible();
   await expect(page.getByText("Quality dimensions")).toBeVisible();
   await expect(page.getByText("No source pack was available")).toBeVisible();
   await expect(page.locator("pre.code-block")).toContainText("cached == DELETED");
@@ -176,14 +181,57 @@ return singleflight(alias, () -> primaryDb.findByAlias(alias));
     winnerConfidence: 0.95,
     modelAgreement: null,
     runDiagnostics: {
-      attemptedProviders: 3,
+      selectedProviders: 3,
+      attemptedProviders: 2,
       validDraftProviders: 1,
+      failedAttempts: 1,
+      skippedProviders: 1,
+      skippedEarlyStopProviders: 1,
+      unavailableProviders: 0,
       providerCoverage: 0.3333,
+      attemptCoverage: 0.6667,
       runHealth: "DEGRADED",
       runConfidence: 0.3333,
       degradedRunStatus: "Only 1 of 3 selected providers produced valid drafts."
     },
     providerFailures: [timeoutFailure()],
+    providerOutcomes: [
+      {
+        providerId: "groq",
+        displayName: "Groq",
+        model: "llama-3.3-70b",
+        status: "SUCCEEDED",
+        safeMessage: "Draft succeeded.",
+        attempted: true,
+        validDraftProduced: true,
+        latencyMs: 900,
+        attemptCount: 1
+      },
+      {
+        providerId: "nvidia",
+        displayName: "NVIDIA Nemotron",
+        model: "nemotron",
+        status: "FAILED",
+        failureCategory: "TIMEOUT",
+        safeMessage: "Timed out at 20s deadline",
+        attempted: true,
+        validDraftProduced: false,
+        latencyMs: 20000,
+        attemptCount: 2,
+        retryAttempted: true
+      },
+      {
+        providerId: "blackbox-gpt55",
+        displayName: "Blackbox GPT 5.5",
+        model: "gpt-5.5",
+        status: "SKIPPED_EARLY_STOP",
+        skipReason: "Skipped: early stop after valid draft confidence 0.95 >= threshold 0.94",
+        safeMessage: "Skipped: early stop after valid draft confidence 0.95 >= threshold 0.94",
+        attempted: false,
+        validDraftProduced: false,
+        attemptCount: 0
+      }
+    ],
     dimensions: {
       correct_endpoint_decision: 0.92,
       deletion_safety: 0.84,
@@ -236,6 +284,14 @@ function traceDebug() {
           failureDetails: {
             ...timeoutFailure()
           }
+        },
+        {
+          provider: "blackbox-gpt55",
+          model: "gpt-5.5",
+          status: "SKIPPED",
+          outcomeStatus: "SKIPPED_EARLY_STOP",
+          errorMessage: "Skipped: early stop after valid draft confidence 0.95 >= threshold 0.94",
+          latencyMs: 0
         }
       ]
     },

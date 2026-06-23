@@ -178,7 +178,8 @@ a {
 }
 
 .status-dot.degraded,
-.status-dot.pending {
+.status-dot.pending,
+.status-dot.neutral {
   background: #fbbf24;
 }
 
@@ -853,6 +854,45 @@ a {
 .provider-outcome-grid {
   display: grid;
   gap: 10px;
+}
+
+.provider-outcome-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.provider-outcome-group {
+  display: grid;
+  gap: 8px;
+}
+
+.provider-outcome-group h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--navy);
+  font-size: 0.82rem;
+}
+
+.provider-outcome-group h4 span {
+  min-width: 20px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.provider-outcome-skipped .failure-category {
+  color: #8a5d00;
+  background: #fff6d9;
+}
+
+.provider-outcome-unavailable .failure-category {
+  color: #5b5f6b;
+  background: #f0f1f4;
 }
 
 .run-health-panel {

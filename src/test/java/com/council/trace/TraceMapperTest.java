@@ -13,6 +13,10 @@ import com.council.model.JudgeRanking;
 import com.council.model.JudgeResult;
 import com.council.model.ProviderFailureDetails;
 import com.council.model.ProviderRunDiagnostics;
+import com.council.model.ProviderOutcome;
+import com.council.model.ProviderOutcomeStatus;
+import com.council.orchestrator.EarlyStopDecision;
+import com.council.judge.TaskType;
 import com.council.research.ResearchPack;
 import com.council.research.ResearchSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -160,6 +164,27 @@ class TraceMapperTest {
         assertTrue(entity.getDraftResults().contains("api.blackbox.ai"));
         assertTrue(entity.getRunDiagnostics().contains("FAILED"));
         assertFalse(entity.getDraftResults().toLowerCase().contains("authorization"));
+    }
+
+    @Test
+    @DisplayName("early-stop outcomes and decision persist as trace diagnostics")
+    void populateEntity_persistsEarlyStopOutcomeSemantics() {
+        TraceEntity entity = new TraceEntity(UUID.randomUUID(), "query");
+        List<DraftResult> drafts = List.of(
+                DraftResult.success("groq", "model", "answer", "summary", List.of(), List.of(), 0.95, 20, "raw"),
+                DraftResult.skipped("blackbox-gpt55", "gpt-5.5", ProviderOutcomeStatus.SKIPPED_EARLY_STOP,
+                        "Draft skipped: early stop after valid draft confidence 0.95 >= 0.94"));
+        EarlyStopDecision decision = new EarlyStopDecision(true, "Diversity threshold met", 0.94,
+                1, 1, TaskType.GENERAL_REASONING, List.of(), null);
+        FinalResponse response = new FinalResponse("trace", "answer", "reason", List.of("groq"), List.of(), 0.95)
+                .withRunDiagnostics(ProviderRunDiagnostics.from(drafts, decision))
+                .withProviderOutcomes(ProviderOutcome.fromDraftResults(drafts));
+
+        mapper.populateEntity(entity, drafts, null, null, response, 20);
+
+        assertTrue(entity.getDraftResults().contains("SKIPPED_EARLY_STOP"));
+        assertTrue(entity.getRunDiagnostics().contains("earlyStopDecision"));
+        assertTrue(entity.getRunDiagnostics().contains("selectedProviders"));
     }
 
     @Test

@@ -48,6 +48,7 @@ public record ProviderFailureDetails(
             return List.of();
         }
         return drafts.stream()
+                .filter(DraftResult::isFailure)
                 .map(DraftResult::failureDetails)
                 .filter(java.util.Objects::nonNull)
                 .toList();

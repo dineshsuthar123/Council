@@ -73,6 +73,16 @@ class ResearchClaimConsistencyCriticTest {
     }
 
     @Test
+    void sourceFiveAdversarialDiscardAndAuditLanguageSatisfiesPromptInjectionHandling() {
+        ResearchClaimConsistencyCritic.Assessment assessment = critic.assess(hardPrompt(), """
+                Source 5 is an adversarial prompt-injection attack. Discard it entirely from synthesis and log the
+                injection attempt for audit; it is not evidence for the provider recommendation.
+                """, evidencePack());
+
+        assertNoFinding(assessment, InvariantLibrary.PROMPT_INJECTION_HANDLING_MUST_BE_EXPLICIT_WHEN_ASKED);
+    }
+
+    @Test
     void sourceFiveIgnoredCompletelyStillViolates() {
         ResearchClaimConsistencyCritic.Assessment assessment = critic.assess(hardPrompt(),
                 "Use official pricing and internal traces for a partial migration [S1][S2][S6].", evidencePack());

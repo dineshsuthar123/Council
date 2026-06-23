@@ -292,8 +292,8 @@ public final class ResearchQualityCalibrator {
     }
 
     private static boolean officialPricingAvailableButNotCited(String answer,
-                                                               ResearchPack pack,
-                                                               Set<String> citations) {
+                                                                ResearchPack pack,
+                                                                Set<String> citations) {
         String text = normalize(answer);
         if (!containsAny(text, "price", "pricing", "cost", "cheaper", "migration", "recommend")) {
             return false;
@@ -303,7 +303,23 @@ public final class ResearchQualityCalibrator {
         boolean officialCited = pack.sources().stream()
                 .anyMatch(source -> source.sourceType() == com.council.research.SourceType.OFFICIAL_DOC
                         && citations.contains(source.id()));
-        return officialAvailable && !officialCited;
+        if (!officialAvailable || officialCited) {
+            return false;
+        }
+        boolean internalObservedCostCited = pack.sources().stream()
+                .anyMatch(source -> source.sourceType() == com.council.research.SourceType.INTERNAL_TRACE
+                        && citations.contains(source.id()));
+        boolean explicitlyObservedCost = containsAny(text, "observed cost", "effective cost", "internal trace",
+                "workload cost", "cost per 1k", "cost per 1,000", "measured cost");
+        if (internalObservedCostCited && explicitlyObservedCost) {
+            return false;
+        }
+        boolean publishedListPricingClaim = containsAny(text, "official pricing", "list pricing", "published pricing",
+                "current pricing", "token pricing", "price per token", "price per 1m", "price per million");
+        boolean migrationRecommendation = containsAny(text, "migration", "migrate", "recommend", "choose provider");
+        // Current list pricing needs an official citation. An observed workload-cost recommendation may rely on an
+        // internal trace when it clearly says that it is observed, but an uncited migration cost claim cannot.
+        return publishedListPricingClaim || migrationRecommendation;
     }
 
     private static boolean mentionsSourcesWithoutIds(String answer, Set<String> citations) {

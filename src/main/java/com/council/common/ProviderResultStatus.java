@@ -5,6 +5,7 @@ package com.council.common;
  */
 public enum ProviderResultStatus {
     SUCCESS,
-    FAILURE
+    FAILURE,
+    SKIPPED
 }
 

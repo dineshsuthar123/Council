@@ -186,6 +186,38 @@ class ResearchQualityCalibratorTest {
         assertTrue(score.score() > 0.55, () -> "score=" + score.score() + ", reasons=" + score.reasons());
     }
 
+    @Test
+    void officialPricingAndObservedInternalCostDoNotTriggerPricingInvariant() {
+        ResearchPack pack = ResearchPack.withEvidence(
+                "Prompt includes provider pricing and internal cost metrics.", List.of(), metricPromptSources(), null, List.of());
+        String prompt = "Give a provider migration recommendation with current pricing and observed workload cost.";
+        String officialAnswer = "Published current pricing is documented by the official provider pages [S1][S2]. "
+                + "Use a bounded migration recommendation rather than a full cutover.";
+        String observedCostAnswer = "Observed effective workload cost is $0.21 per 1K requests for Provider B in "
+                + "internal traces [S6]. Use that measured cost for a bounded canary recommendation.";
+
+        var critic = new InvariantViolationCritic();
+        var official = critic.evaluate(prompt, officialAnswer, pack);
+        var observed = critic.evaluate(prompt, observedCostAnswer, pack);
+
+        assertFalse(official.violations().stream().anyMatch(violation ->
+                violation.invariantId().contains("official_sources_beat_old_blog")));
+        assertFalse(observed.violations().stream().anyMatch(violation ->
+                violation.invariantId().contains("official_sources_beat_old_blog")));
+    }
+
+    @Test
+    void blogOnlyCurrentPricingClaimTriggersPricingInvariant() {
+        ResearchPack pack = ResearchPack.withEvidence(
+                "Prompt includes provider pricing and internal cost metrics.", List.of(), metricPromptSources(), null, List.of());
+        var result = new InvariantViolationCritic().evaluate(
+                "Give a provider migration recommendation with current pricing.",
+                "The old blog says current pricing is lower, so migrate to Provider B [S3].", pack);
+
+        assertTrue(result.violations().stream().anyMatch(violation ->
+                violation.invariantId().contains("official_sources_beat_old_blog")));
+    }
+
     private ResearchPack packWithSources() {
         return ResearchPack.withSources(
                 "Prompt asks for current information.",

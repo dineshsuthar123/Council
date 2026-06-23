@@ -584,8 +584,8 @@ class ReasoningOrchestratorTest {
         assertEquals("NO_VALID_DESIGN", response.error());
         assertEquals("All generated designs violate system constraints. Regeneration required.", response.message());
         assertTrue(response.usedProviders().isEmpty());
-        assertTrue(response.failedProviders().contains("gemini"));
-        assertTrue(response.failedProviders().contains("deepseek"));
+        assertTrue(response.failedProviders().isEmpty(),
+                "Verifier rejection is not a provider execution failure");
         verify(synthesizerEngine, never()).synthesize(any());
     }
 
@@ -613,7 +613,8 @@ class ReasoningOrchestratorTest {
         assertNotNull(response);
         assertEquals("Gemini answer", response.finalAnswer());
         assertEquals(List.of("gemini"), response.usedProviders());
-        assertTrue(response.failedProviders().contains("deepseek"));
+        assertFalse(response.failedProviders().contains("deepseek"),
+                "A verifier-rejected draft must not be rendered as a failed provider attempt");
         verify(synthesizerEngine).synthesize(argThat(request ->
                 request != null
                         && request.drafts().size() == 1
@@ -706,8 +707,8 @@ class ReasoningOrchestratorTest {
     }
 
     @Test
-    @DisplayName("Early stop cancels pending drafts when a sufficient answer arrives")
-    void earlyStopCancelsPendingDraftsWhenQualityIsSufficient() {
+    @DisplayName("Early stop marks unstarted providers as skipped when a sufficient general answer arrives")
+    void earlyStopSkipsPendingDraftsWhenQualityIsSufficient() {
         ReasoningOrchestrator earlyStopOrchestrator =
                 orchestratorWithDraftBudget(10, 10, 10, true, 0.80);
         LlmAdapter fast = mockAdapter("fast", "fast-model",
@@ -730,9 +731,47 @@ class ReasoningOrchestratorTest {
 
         assertEquals(2, results.size());
         assertTrue(results.get(0).isSuccess());
-        assertFalse(results.get(1).isSuccess());
+        assertTrue(results.get(1).isSkipped());
         assertTrue(results.get(1).errorMessage().contains("early stop"));
         assertTrue(elapsedMillis < 3_000, "early stop should cancel the pending slow provider");
+    }
+
+    @Test
+    @DisplayName("Hard research collects three valid drafts before it skips remaining providers")
+    void hardResearchCollectsDiverseDraftsBeforeEarlyStop() {
+        ReasoningOrchestrator earlyStopOrchestrator =
+                orchestratorWithDraftBudget(10, 10, 10, true, 0.80);
+        List<LlmAdapter> providers = List.of(
+                mockAdapter("a", "a-model", citedResearchDraft("a")),
+                mockAdapter("b", "b-model", citedResearchDraft("b")),
+                mockAdapter("c", "c-model", citedResearchDraft("c")),
+                mockAdapter("d", "d-model", citedResearchDraft("d")),
+                mockAdapter("e", "e-model", citedResearchDraft("e")),
+                mockAdapter("f", "f-model", citedResearchDraft("f")));
+        ResearchPack evidence = ResearchPack.withSources("Prompt evidence", List.of(), List.of(
+                new ResearchSource("S1", "Official source", "https://example.com", "example.com",
+                        "Official recommendation evidence.", "2026-06-23", 0.95)));
+
+        List<DraftResult> results = earlyStopOrchestrator.runDraftPhase(providers,
+                DraftRequest.of("trace-hard-research", "Give a recommendation using [S1]."),
+                TaskType.RESEARCH_REQUIRED, evidence);
+        ProviderRunDiagnostics diagnostics = ProviderRunDiagnostics.from(results);
+
+        assertEquals(3, results.stream().filter(DraftResult::isSuccess).count());
+        assertEquals(3, results.stream().filter(DraftResult::isSkipped).count());
+        assertTrue(results.stream().noneMatch(DraftResult::isFailure));
+        assertEquals(6, diagnostics.selectedProviders());
+        assertEquals(3, diagnostics.attemptedProviders());
+        assertEquals(3, diagnostics.validDraftProviders());
+        assertEquals(0.5, diagnostics.providerCoverage());
+        assertEquals(0.5, diagnostics.attemptCoverage());
+        assertEquals("DEGRADED", diagnostics.runHealth());
+    }
+
+    private DraftResult citedResearchDraft(String provider) {
+        return DraftResult.success(provider, provider + "-model",
+                "Recommendation: retain the current default based on registered evidence [S1].",
+                "summary", List.of(), List.of(), 0.96, 10, "raw");
     }
 
     private LlmAdapter mockAdapter(String name, String model, DraftResult result) {

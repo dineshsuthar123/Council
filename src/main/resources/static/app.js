@@ -361,7 +361,7 @@ function renderAnswer(response) {
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
     ${runHealthPanel(response.runDiagnostics)}
-    ${providerOutcomePanel(response.providerFailures)}
+    ${providerOutcomePanel(response.providerOutcomes || response.providerFailures)}
     ${dimensionGrid(response.dimensions)}
     ${invariantPanel(response.invariants)}
     ${researchPanel(response.research)}
@@ -1096,43 +1096,71 @@ function providerOutcomePanel(draftResults) {
     return "";
   }
 
+  const groups = [
+    { key: "used", label: "Used / valid drafts", statuses: ["SUCCEEDED"] },
+    { key: "failed", label: "Failed attempts", statuses: ["FAILED"] },
+    { key: "skipped", label: "Skipped", match: (status) => status.startsWith("SKIPPED_") },
+    { key: "unavailable", label: "Unavailable / disabled", match: (status) => status.startsWith("UNAVAILABLE_") },
+  ];
+
   const rows = drafts.map((draft) => {
     const diagnostics = draft.failureDetails || draft;
-    const status = String(draft.status || (diagnostics.failureCategory || draft.errorMessage ? "FAILURE" : "SUCCESS")).toUpperCase();
-    const ok = status === "SUCCESS";
+    const rawStatus = String(draft.outcomeStatus || draft.status
+      || (diagnostics.failureCategory || draft.errorMessage ? "FAILED" : "SUCCEEDED")).toUpperCase();
+    const status = rawStatus === "SUCCESS" ? "SUCCEEDED" : rawStatus === "FAILURE" ? "FAILED" : rawStatus;
+    const ok = status === "SUCCEEDED";
+    const skipped = status.startsWith("SKIPPED_");
+    const unavailable = status.startsWith("UNAVAILABLE_");
+    const attempted = typeof draft.attempted === "boolean" ? draft.attempted : !(skipped || unavailable);
     const provider = diagnostics.displayName || diagnostics.providerId || draft.provider || "unknown";
-    const category = diagnostics.failureCategory ? humanize(diagnostics.failureCategory) : "Unknown failure";
+    const category = skipped ? "Skipped" : unavailable ? "Unavailable"
+      : diagnostics.failureCategory ? humanize(diagnostics.failureCategory) : "Unknown failure";
     const reason = ok
       ? (draft.summary || "Draft succeeded.")
-      : (diagnostics.safeMessage || draft.errorMessage || draft.summary || "Provider failed without a captured reason.");
-    const retry = diagnostics.retryAttempted
+      : (draft.skipReason || diagnostics.safeMessage || draft.errorMessage || draft.summary
+        || "Provider outcome did not include a safe reason.");
+    const retry = !attempted
+      ? "not attempted"
+      : diagnostics.retryAttempted
       ? `retried (${diagnostics.attemptCount || 2} attempts)`
       : `single attempt (${diagnostics.attemptCount || 1})`;
     const circuit = diagnostics.circuitBreakerState && diagnostics.circuitBreakerState !== "UNKNOWN"
       ? `circuit ${diagnostics.circuitBreakerState.toLowerCase()}`
       : "";
-    return `
+    const group = ok ? "used" : skipped ? "skipped" : unavailable ? "unavailable" : "failed";
+    return { group, status, markup: `
       <div class="provider-outcome-row">
         <div>
-          <strong><span class="status-dot ${ok ? "up" : "down"}"></span>${escapeHtml(provider)}</strong>
+          <strong><span class="status-dot ${ok ? "up" : skipped ? "neutral" : "down"}"></span>${escapeHtml(provider)}</strong>
           <small>${escapeHtml(diagnostics.providerId || draft.provider || "unknown")} - ${escapeHtml(draft.model || diagnostics.model || "model --")} - ${diagnostics.latencyMs ?? draft.latencyMs ?? "--"} ms</small>
         </div>
         <div>
           ${ok ? "" : `<span class="failure-category">${escapeHtml(category)}</span>`}
           <p class="${ok ? "" : "failure-reason"}">${escapeHtml(reason)}</p>
-          ${ok ? "" : `<small class="failure-meta">${escapeHtml([retry, circuit, diagnostics.httpStatus ? `HTTP ${diagnostics.httpStatus}` : ""].filter(Boolean).join(" - "))}</small>`}
+          ${ok ? "" : `<small class="failure-meta">${escapeHtml([humanize(status), retry, circuit, diagnostics.httpStatus ? `HTTP ${diagnostics.httpStatus}` : ""].filter(Boolean).join(" - "))}</small>`}
         </div>
       </div>
-    `;
+    ` };
+  });
+
+  const groupedRows = groups.map((group) => {
+    const matching = rows.filter((row) => group.statuses
+      ? group.statuses.includes(row.status)
+      : group.match(row.status));
+    if (!matching.length) return "";
+    return `<section class="provider-outcome-group provider-outcome-${group.key}">
+      <h4>${escapeHtml(group.label)} <span>${matching.length}</span></h4>
+      <div class="provider-outcome-grid">${matching.map((row) => row.markup).join("")}</div>
+    </section>`;
   }).join("");
 
   return `
     <div class="provider-outcome-panel" aria-label="Provider outcomes">
       <div class="dimension-heading">
         <span>Provider outcomes</span>
-        <small>Failure reasons and latencies</small>
+        <small>Used, failed, skipped, and unavailable providers</small>
       </div>
-      <div class="provider-outcome-grid">${rows}</div>
+      ${groupedRows}
     </div>
   `;
 }
@@ -1151,8 +1179,13 @@ function runHealthPanel(diagnostics) {
   const coverage = scoreValue(diagnostics.providerCoverage);
   const health = String(diagnostics.runHealth || "UNKNOWN").toUpperCase();
   const healthy = health === "HEALTHY";
+  const selected = Number(diagnostics.selectedProviders || diagnostics.attemptedProviders || 0);
   const attempted = Number(diagnostics.attemptedProviders || 0);
   const valid = Number(diagnostics.validDraftProviders || 0);
+  const failed = Number(diagnostics.failedAttempts || 0);
+  const skipped = Number(diagnostics.skippedProviders || 0);
+  const unavailable = Number(diagnostics.unavailableProviders || 0);
+  const attemptCoverage = scoreValue(diagnostics.attemptCoverage ?? (selected ? attempted / selected : 0));
   const reason = diagnostics.degradedRunStatus || "All selected providers returned valid drafts.";
   return `
     <div class="run-health-panel ${healthy ? "healthy" : "degraded"}" aria-label="Provider run health">
@@ -1163,7 +1196,10 @@ function runHealthPanel(diagnostics) {
       </div>
       <div class="run-health-metrics">
         <span>Provider coverage <strong>${Math.round(coverage * 1000) / 10}%</strong></span>
-        <span>Valid drafts <strong>${valid}/${attempted}</strong></span>
+        <span>Attempt coverage <strong>${Math.round(attemptCoverage * 1000) / 10}%</strong></span>
+        <span>Selected providers <strong>${selected}</strong></span>
+        <span>Attempted / valid <strong>${attempted}/${valid}</strong></span>
+        <span>Failed / skipped / unavailable <strong>${failed}/${skipped}/${unavailable}</strong></span>
         <span>Run confidence <strong>${Math.round(scoreValue(diagnostics.runConfidence) * 100)}%</strong></span>
       </div>
     </div>
