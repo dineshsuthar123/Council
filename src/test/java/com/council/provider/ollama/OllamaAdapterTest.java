@@ -7,6 +7,7 @@ import com.council.config.RestClientFactory;
 import com.council.json.JsonResponseNormalizer;
 import com.council.metrics.OrchestrationMetrics;
 import com.council.provider.ProviderCallExecutor;
+import com.council.provider.ProviderStatusDetails;
 import com.council.provider.ResponseMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -131,6 +132,27 @@ class OllamaAdapterTest {
                 () -> adapter(missingChatBaseUrl, "ollama-deepseek", "deepseek-r1:8b", 0.2, 512, 1_000)
                         .invoke("prompt"));
         assertEquals(ProviderFailureCategory.MODEL_NOT_INSTALLED, missingFromChat.getFailureCategory());
+    }
+
+    @Test
+    void providerStatusUsesCurrentModelAvailabilityInsteadOfStaleGenerationFailure() throws Exception {
+        String baseUrl = startServer(
+                "{\"models\":[{\"name\":\"qwen2.5-coder:7b\"}]}",
+                500,
+                "{\"error\":\"temporary local runtime failure\"}",
+                new AtomicReference<>(),
+                0);
+        ExposedOllamaAdapter adapter = adapter(baseUrl, "ollama-qwen-coder",
+                "qwen2.5-coder:7b", 0.2, 512, 1_000);
+
+        ProviderException failure = assertThrows(ProviderException.class,
+                () -> adapter.invoke("prompt"));
+        assertEquals(ProviderFailureCategory.NETWORK_ERROR, failure.getFailureCategory());
+
+        ProviderStatusDetails status = adapter.providerStatusDetails();
+        assertTrue(status.available());
+        assertTrue(status.modelInstalled());
+        assertNull(status.failureReason());
     }
 
     private String startServer(String tagsResponse,

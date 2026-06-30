@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.client.ResourceAccessException;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -72,6 +73,14 @@ class OllamaModelAvailabilityServiceTest {
         assertEquals(OllamaAvailabilityStatus.DISABLED, result.status());
         assertFalse(result.enabled());
         assertFalse(result.reachable());
+    }
+
+    @Test
+    void interruptedLocalHttpCallsAreClassifiedAsTimeouts() {
+        OllamaAvailabilityStatus status = OllamaModelAvailabilityService.classifyResourceAccess(
+                new ResourceAccessException("request interrupted while waiting for Ollama"));
+
+        assertEquals(OllamaAvailabilityStatus.TIMEOUT, status);
     }
 
     private OllamaModelAvailabilityService service(String baseUrl) {

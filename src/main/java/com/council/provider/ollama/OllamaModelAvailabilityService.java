@@ -97,6 +97,12 @@ public class OllamaModelAvailabilityService {
         if (message.contains("timed out") || message.contains("timeout")) {
             return OllamaAvailabilityStatus.TIMEOUT;
         }
+        if (message.contains("interrupted")
+                || message.contains("cancelled")
+                || message.contains("canceled")
+                || message.contains("operation interrupted")) {
+            return OllamaAvailabilityStatus.TIMEOUT;
+        }
         if (message.contains("connection refused")
                 || message.contains("connectexception")
                 || message.contains("failed to connect")

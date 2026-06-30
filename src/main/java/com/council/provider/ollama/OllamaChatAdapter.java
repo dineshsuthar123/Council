@@ -149,10 +149,9 @@ public class OllamaChatAdapter extends AbstractLlmAdapter implements ProviderSta
     @Override
     public ProviderStatusDetails providerStatusDetails() {
         OllamaModelAvailability availability = availabilityService.check(logicalConfig);
-        ProviderFailureCategory failure = availability.available() ? latestFailure.get()
-                : failureCategoryFor(availability.status());
+        ProviderFailureCategory failure = availability.available() ? null : failureCategoryFor(availability.status());
         boolean enabled = isEnabled();
-        boolean available = enabled && availability.available() && latestFailure.get() == null;
+        boolean available = enabled && availability.available();
         OllamaPreflightResult preflight = preflightResult.get();
         return new ProviderStatusDetails(
                 displayName(),
