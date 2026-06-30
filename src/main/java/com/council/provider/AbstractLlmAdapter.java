@@ -70,11 +70,13 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
     @Override
     public DraftResult generateDraft(DraftRequest request) {
         long start = System.currentTimeMillis();
+        String prompt = null;
         MDC.put(CouncilConstants.MDC_PROVIDER, provider);
         MDC.put(CouncilConstants.MDC_TRACE_ID, request.traceId());
         try {
-            String prompt = PromptTemplates.buildDraftPrompt(request.userQuery());
-            String rawResponse = callExecutor.execute(provider, () -> callApi(prompt));
+            String draftPrompt = PromptTemplates.buildDraftPrompt(request.userQuery());
+            prompt = draftPrompt;
+            String rawResponse = callExecutor.execute(provider, () -> callApi(draftPrompt));
             long latency = System.currentTimeMillis() - start;
 
             JsonNode node = normalizer.normalizeDraft(provider, rawResponse);
