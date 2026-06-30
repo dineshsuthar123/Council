@@ -1,6 +1,7 @@
 package com.council.provider.routing;
 
 import com.council.config.CouncilProperties;
+import com.council.config.ProviderMode;
 import com.council.provider.LlmAdapter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +41,10 @@ class DefaultProviderSelectionStrategyTest {
         adapters.put("mistral", mockAdapter("mistral"));
         adapters.put("gemini", mockAdapter("gemini"));
         adapters.put("kimi", mockAdapter("kimi"));
+        adapters.put("ollama-qwen-coder", mockAdapter("ollama-qwen-coder"));
+        adapters.put("ollama-deepseek", mockAdapter("ollama-deepseek"));
+        adapters.put("ollama-llama", mockAdapter("ollama-llama"));
+        adapters.put("ollama-gemma", mockAdapter("ollama-gemma"));
     }
 
     private LlmAdapter mockAdapter(String name) {
@@ -182,6 +187,67 @@ class DefaultProviderSelectionStrategyTest {
             List<LlmAdapter> selected = strategy.selectDraftProviders(descriptors, adapters, "trace-7");
 
             assertEquals(3, selected.size());
+        }
+
+        @Test
+        @DisplayName("free_first selects only local drafts when Ollama providers are available")
+        void freeFirstPrefersOnlyLocalDraftsInitially() {
+            properties.setProviderMode(ProviderMode.FREE_FIRST);
+            strategy = new DefaultProviderSelectionStrategy(properties, concurrencyLimiter);
+            properties.getRouting().setMaxDraftProviders(4);
+            List<ProviderDescriptor> descriptors = List.of(
+                    desc("blackbox-gpt55", true, List.of(ProviderRole.DRAFT), 1, 0.90, false),
+                    desc("groq", true, List.of(ProviderRole.DRAFT), 2, 0.80, false),
+                    desc("ollama-qwen-coder", true, List.of(ProviderRole.DRAFT), 10, 0.72, false),
+                    desc("ollama-deepseek", true, List.of(ProviderRole.DRAFT), 11, 0.74, false),
+                    desc("ollama-llama", true, List.of(ProviderRole.DRAFT), 12, 0.70, false)
+            );
+            adapters.put("blackbox-gpt55", mockAdapter("blackbox-gpt55"));
+
+            List<LlmAdapter> selected = strategy.selectDraftProviders(descriptors, adapters, "trace-free-first");
+
+            assertEquals(List.of("ollama-qwen-coder", "ollama-deepseek", "ollama-llama"),
+                    selected.stream().map(LlmAdapter::providerName).toList());
+        }
+
+        @Test
+        @DisplayName("local_only filters external providers from draft selection")
+        void localOnlyFiltersExternalDrafts() {
+            properties.setProviderMode(ProviderMode.LOCAL_ONLY);
+            strategy = new DefaultProviderSelectionStrategy(properties, concurrencyLimiter);
+            List<ProviderDescriptor> descriptors = List.of(
+                    desc("blackbox-gpt55", true, List.of(ProviderRole.DRAFT), 1, 0.90, false),
+                    desc("groq", true, List.of(ProviderRole.DRAFT), 2, 0.80, false),
+                    desc("ollama-qwen-coder", true, List.of(ProviderRole.DRAFT), 10, 0.72, false)
+            );
+            adapters.put("blackbox-gpt55", mockAdapter("blackbox-gpt55"));
+
+            List<LlmAdapter> selected = strategy.selectDraftProviders(descriptors, adapters, "trace-local-only");
+
+            assertEquals(List.of("ollama-qwen-coder"),
+                    selected.stream().map(LlmAdapter::providerName).toList());
+        }
+
+        @Test
+        @DisplayName("local_only selects every available Ollama draft despite normal fan-out cap")
+        void localOnlySelectsAllLocalDrafts() {
+            properties.setProviderMode(ProviderMode.LOCAL_ONLY);
+            properties.getRouting().setMaxDraftProviders(2);
+            strategy = new DefaultProviderSelectionStrategy(properties, concurrencyLimiter);
+            List<ProviderDescriptor> descriptors = List.of(
+                    desc("blackbox-gpt55", true, List.of(ProviderRole.DRAFT), 1, 0.90, false),
+                    desc("groq", true, List.of(ProviderRole.DRAFT), 2, 0.80, false),
+                    desc("ollama-qwen-coder", true, List.of(ProviderRole.DRAFT), 10, 0.72, false),
+                    desc("ollama-deepseek", true, List.of(ProviderRole.DRAFT), 11, 0.74, false),
+                    desc("ollama-llama", true, List.of(ProviderRole.DRAFT), 12, 0.70, false),
+                    desc("ollama-gemma", true, List.of(ProviderRole.DRAFT), 13, 0.68, false)
+            );
+            adapters.put("blackbox-gpt55", mockAdapter("blackbox-gpt55"));
+
+            List<LlmAdapter> selected = strategy.selectDraftProviders(descriptors, adapters, "trace-local-only-all");
+
+            assertEquals(List.of("ollama-qwen-coder", "ollama-deepseek", "ollama-llama", "ollama-gemma"),
+                    selected.stream().map(LlmAdapter::providerName).toList());
         }
     }
 

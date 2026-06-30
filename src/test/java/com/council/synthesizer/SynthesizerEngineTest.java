@@ -93,10 +93,12 @@ class SynthesizerEngineTest {
         ));
 
         when(registry.getCriticAdapter("openrouter")).thenReturn(Optional.of(openrouter));
-        when(registry.getAllAdapters()).thenReturn(Map.of(
+        Map<String, LlmAdapter> adapters = Map.of(
                 "openrouter", openrouter,
                 "gemini", gemini
-        ));
+        );
+        when(registry.getAllAdapters()).thenReturn(adapters);
+        when(registry.getAdaptersForCurrentMode()).thenReturn(adapters);
 
         SynthesisResult result = synthesizerEngine.synthesize(buildRequest());
 

@@ -39,7 +39,10 @@ public record ProviderStatusResponse(
         String preflightFailureCategory,
         String preflightSafeMessage,
         String preflightCheckedAt,
-        Long preflightLatencyMs
+        Long preflightLatencyMs,
+        String providerType,
+        Boolean modelInstalled,
+        String remediation
 ) {
     /**
      * Compact constructor for legacy (non-routing) usage.
@@ -54,7 +57,7 @@ public record ProviderStatusResponse(
                 lastSuccess, lastFailure,
                 null, null, null, null, null, null,
                 null, null, null, null, null,
-                null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null);
     }
 
     public ProviderStatusResponse(String provider, String model, boolean enabled,
@@ -71,6 +74,6 @@ public record ProviderStatusResponse(
                 roles, priority, maxConcurrency, availableConcurrencyPermits, fallbackProviders,
                 availableForRouting,
                 null, null, null, null, null,
-                null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null);
     }
 }

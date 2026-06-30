@@ -385,7 +385,8 @@ async function loadHealth() {
     const status = String(health.status || "UNKNOWN").toUpperCase();
     const statusClass = status === "UP" ? "up" : status === "DEGRADED" ? "degraded" : "down";
     els.health.innerHTML = `<span class="status-dot ${statusClass}"></span><span>${escapeHtml(status)}</span>`;
-    els.routing.textContent = health.routingEnabled ? "Enabled" : "Classic";
+    const mode = health.providerMode ? humanize(health.providerMode) : null;
+    els.routing.textContent = `${health.routingEnabled ? "Enabled" : "Classic"}${mode ? ` / ${mode}` : ""}`;
     els.available.textContent = Array.isArray(health.availableProviders) ? health.availableProviders.length : "--";
     els.research.textContent = health.research?.available
       ? "Ready"
@@ -457,6 +458,13 @@ function renderProviderRow(provider, scorecard) {
     ? `preflight ${humanize(provider.preflightStatus)}${provider.preflightFailureCategory ? ` (${humanize(provider.preflightFailureCategory)})` : ""}`
     : "preflight not available";
   const timeout = provider.timeoutMsConfigured ? `timeout ${provider.timeoutMsConfigured} ms` : "";
+  const localState = provider.providerType === "LOCAL"
+    ? [
+        "local",
+        provider.modelInstalled === true ? "model installed" : provider.modelInstalled === false ? "model missing" : "",
+        provider.remediation || ""
+      ].filter(Boolean).join(" - ")
+    : provider.providerType ? provider.providerType.toLowerCase() : "";
   const warningLine = warnings.length ? `<div class="provider-warning">${escapeHtml(warnings.join(" "))}</div>` : "";
 
   return `
@@ -464,7 +472,7 @@ function renderProviderRow(provider, scorecard) {
       <div>
         <div class="provider-name"><span class="status-dot ${statusClass}"></span>${escapeHtml(provider.provider)}</div>
         <div class="provider-model">${escapeHtml(provider.model || "model unavailable")}</div>
-        <div class="provider-model">${escapeHtml([preflight, timeout, provider.timeoutSource].filter(Boolean).join(" - "))}</div>
+        <div class="provider-model">${escapeHtml([localState, preflight, timeout, provider.timeoutSource].filter(Boolean).join(" - "))}</div>
         ${warningLine}
       </div>
       <div class="provider-roles">${roles}</div>
@@ -1227,6 +1235,7 @@ function runHealthPanel(diagnostics) {
   const unavailable = Number(diagnostics.unavailableProviders || 0);
   const attemptCoverage = scoreValue(diagnostics.attemptCoverage ?? (selected ? attempted / selected : 0));
   const reason = diagnostics.degradedRunStatus || "All selected providers returned valid drafts.";
+  const providerMode = diagnostics.providerMode ? humanize(diagnostics.providerMode) : "Default";
   return `
     <div class="run-health-panel ${healthy ? "healthy" : "degraded"}" aria-label="Provider run health">
       <div>
@@ -1240,6 +1249,7 @@ function runHealthPanel(diagnostics) {
         <span>Selected providers <strong>${selected}</strong></span>
         <span>Attempted / valid <strong>${attempted}/${valid}</strong></span>
         <span>Failed / skipped / unavailable <strong>${failed}/${skipped}/${unavailable}</strong></span>
+        <span>Provider mode <strong>${escapeHtml(providerMode)}</strong></span>
         <span>Run confidence <strong>${Math.round(scoreValue(diagnostics.runConfidence) * 100)}%</strong></span>
       </div>
     </div>

@@ -5,6 +5,7 @@ import com.council.common.CouncilConstants;
 import com.council.common.CouncilUtils;
 import com.council.common.exception.ProviderFailureCategory;
 import com.council.config.CouncilProperties;
+import com.council.config.ProviderMode;
 import com.council.critic.CriticEngine;
 import com.council.events.PipelineEventBroadcaster;
 import com.council.judge.DeterministicJudge;
@@ -172,6 +173,7 @@ public class ReasoningOrchestrator {
             log.info("[orchestrator] Prompt classified as: {}", taskType);
             emit(traceId, "CLASSIFY", "done", "Prompt classified as " + taskType, startTime,
                     Map.of("taskType", taskType.name(),
+                            "providerMode", providerModeValue(),
                             "requestTimeoutSeconds", budget.requestTimeoutSeconds(),
                             "draftTimeoutSeconds", budget.draftTimeoutSeconds(),
                             "perProviderDeadlineSeconds", budget.perProviderDeadlineSeconds(),
@@ -225,7 +227,8 @@ public class ReasoningOrchestrator {
             List<DraftResult> traceDrafts = new ArrayList<>(allDrafts);
             traceDraftsForFailure = traceDrafts;
             ProviderRunDiagnostics initialRunDiagnostics =
-                    ProviderRunDiagnostics.from(allDrafts, initialDraftPhase.earlyStopDecision());
+                    ProviderRunDiagnostics.from(allDrafts, initialDraftPhase.earlyStopDecision(),
+                            providerModeValue());
 
             List<DraftResult> successfulDrafts = allDrafts.stream()
                     .filter(DraftResult::isSuccess).toList();
@@ -357,7 +360,8 @@ public class ReasoningOrchestrator {
                             FinalResponse failure = withResearch(
                                     constraintFailureResponse(traceId, finalFailed), researchPack)
                                     .withRunDiagnostics(ProviderRunDiagnostics.from(traceDrafts,
-                                            initialDraftPhase.earlyStopDecision()))
+                                            initialDraftPhase.earlyStopDecision(),
+                                            providerModeValue()))
                                     .withProviderFailures(ProviderFailureDetails.fromDraftResults(traceDrafts))
                                     .withProviderOutcomes(ProviderOutcome.fromDraftResults(traceDrafts));
                             persistTrace(traceId, userQuery, traceDrafts, finalCritic, null, failure, startTime);
@@ -442,7 +446,8 @@ public class ReasoningOrchestrator {
                     finalQuality.scoreBreakdown())
                     .withResearch(researchPack)
                     .withInvariants(finalQuality.invariants())
-                    .withRunDiagnostics(ProviderRunDiagnostics.from(traceDrafts, initialDraftPhase.earlyStopDecision()))
+                    .withRunDiagnostics(ProviderRunDiagnostics.from(traceDrafts, initialDraftPhase.earlyStopDecision(),
+                            providerModeValue()))
                     .withProviderFailures(ProviderFailureDetails.fromDraftResults(traceDrafts))
                     .withProviderOutcomes(ProviderOutcome.fromDraftResults(traceDrafts));
 
@@ -484,9 +489,9 @@ public class ReasoningOrchestrator {
 
     private List<LlmAdapter> selectDraftProviders(String traceId, TaskType taskType) {
         if (registry.isRoutingEnabled()) {
-            List<ProviderDescriptor> descriptors = registry.buildDescriptors();
+            List<ProviderDescriptor> descriptors = registry.buildDescriptorsForCurrentMode();
             return selectionStrategy.selectDraftProviders(
-                    descriptors, registry.getAllAdapters(), traceId, taskType);
+                    descriptors, registry.getAdaptersForCurrentMode(), traceId, taskType);
         }
         return registry.getAvailableDraftProviders();
     }
@@ -495,10 +500,18 @@ public class ReasoningOrchestrator {
                                                        double bestConfidence,
                                                        double contradictionSeverity,
                                                        List<String> alreadyUsed) {
-        List<ProviderDescriptor> descriptors = registry.buildDescriptors();
+        List<ProviderDescriptor> descriptors = registry.buildDescriptorsForCurrentMode();
         return selectionStrategy.selectEscalationProviders(
-                descriptors, registry.getAllAdapters(),
+                descriptors, registry.getAdaptersForCurrentMode(),
                 bestConfidence, contradictionSeverity, alreadyUsed, traceId);
+    }
+
+    private String providerModeValue() {
+        return providerMode().configValue();
+    }
+
+    private ProviderMode providerMode() {
+        return ProviderMode.safe(registry.providerMode());
     }
 
     /* ── Phase 1: Draft generation (parallel via virtual threads) ── */
@@ -742,10 +755,14 @@ public class ReasoningOrchestrator {
     }
 
     private long providerDeadlineSeconds(LlmAdapter provider, ExecutionBudget budget) {
-        int configuredProviderTimeout = providerConfigs
-                .getOrDefault(provider.providerName(), new CouncilProperties.ProviderConfig())
-                .getTimeoutSeconds();
-        long configured = positiveOrDefault(configuredProviderTimeout, budget.perProviderDeadlineSeconds());
+        if (providerMode() == ProviderMode.LOCAL_ONLY
+                && ProviderMode.isLocalProvider(provider.providerName())) {
+            return Math.max(1L, budget.perProviderDeadlineSeconds());
+        }
+        CouncilProperties.ProviderConfig config = providerConfigs
+                .getOrDefault(provider.providerName(), new CouncilProperties.ProviderConfig());
+        long configured = Math.max(1L,
+                TimeUnit.MILLISECONDS.toSeconds(config.getEffectiveTimeoutMillis()));
         return Math.max(1L, Math.min(budget.perProviderDeadlineSeconds(), configured));
     }
 
@@ -1016,6 +1033,15 @@ public class ReasoningOrchestrator {
         double threshold = positiveDoubleOrDefault(
                 taskBudget == null ? 0.0 : taskBudget.getEarlyStopQualityThreshold(),
                 earlyStopQualityThreshold);
+
+        if (providerMode() == ProviderMode.LOCAL_ONLY) {
+            requestSeconds = Math.max(requestSeconds, positiveOrDefault(
+                    orchestratorConfig.getLocalOnlyRequestTimeoutSeconds(), requestSeconds));
+            draftSeconds = Math.max(draftSeconds, positiveOrDefault(
+                    orchestratorConfig.getLocalOnlyDraftTimeoutSeconds(), draftSeconds));
+            providerSeconds = Math.max(providerSeconds, positiveOrDefault(
+                    orchestratorConfig.getLocalOnlyPerProviderDeadlineSeconds(), providerSeconds));
+        }
 
         return new ExecutionBudget(
                 effectiveTaskType,

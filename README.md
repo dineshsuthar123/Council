@@ -9,6 +9,7 @@ The product goal is not to be another single-model chat wrapper. Council routes 
 - Runs task-aware multi-provider reasoning across enabled LLM adapters.
 - Separates answer quality, winner confidence, and model agreement so a tie or single-provider fallback is not mistaken for low answer quality.
 - Handles provider failures explicitly with safe diagnostics for auth, quota, timeout, bad schema, missing keys, invalid config, and circuit-breaker state.
+- Supports local Ollama providers so Council can run in `local_only` mode without paid API credits.
 - Supports Blackbox AI logical providers as independent models with per-model keys, model IDs, timeouts, preflight validation, and config warnings.
 - Adds research-aware prompting with source packs, citation validation, source-boundary checks, prompt-injection handling, and evidence-grounded scoring.
 - Uses invariant-based evaluation for production failure modes such as payment idempotency, URL-shortener deletion consistency, cache stampede, stale replicas, and research citation quality.
@@ -111,7 +112,58 @@ java -jar target/council-0.1.0-SNAPSHOT.jar
 
 ## Provider Configuration
 
-Most providers are disabled until a key is supplied. Blackbox AI has a provider-family configuration where each logical model appears as a separate Council provider.
+Council supports four provider modes:
+
+- `local_only`: selects only local Ollama providers and does not attempt paid/external providers.
+- `free_first`: default; prefers Ollama providers first and escalates only when policy allows it.
+- `hybrid`: uses local and configured external providers together.
+- `premium`: prefers strongest configured external providers while local models can still help as cheap critics or summarizers.
+
+Most hosted providers are disabled until a key is supplied. Ollama providers do not require API keys.
+
+### Local Ollama Backbone
+
+Install Ollama, then pull the local models:
+
+```bash
+ollama pull qwen2.5-coder:7b
+ollama pull deepseek-r1:8b
+ollama pull llama3.1:8b
+ollama pull gemma3:4b
+```
+
+For Docker Compose with Ollama running on the Windows host:
+
+```bash
+COUNCIL_PROVIDER_MODE=local_only
+OLLAMA_ENABLED=true
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+LOCAL_ONLY_REQUEST_TIMEOUT_SECONDS=180
+LOCAL_ONLY_DRAFT_TIMEOUT_SECONDS=120
+LOCAL_ONLY_PER_PROVIDER_DEADLINE_SECONDS=90
+docker compose up -d --build
+```
+
+For direct Spring Boot on the host:
+
+```bash
+COUNCIL_PROVIDER_MODE=local_only
+OLLAMA_ENABLED=true
+OLLAMA_BASE_URL=http://localhost:11434
+mvn spring-boot:run
+```
+
+Verify local model visibility:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+Local models are slower and usually lower quality than elite hosted models, but they are excellent for free drafts, critics, summarization, offline demos, and a no-credit fallback backbone. Council still judges and calibrates local answers normally; it does not inflate scores because a provider is local.
+
+In `local_only`, Council selects all four enabled Ollama logical providers and uses the `LOCAL_ONLY_*` budget knobs so slower desktop inference does not fail under hosted-provider latency limits.
+
+Blackbox AI has a provider-family configuration where each logical model appears as a separate Council provider.
 
 Example:
 
@@ -209,6 +261,12 @@ Live provider tests are gated and should not run in default PR CI. Enable them o
 
 ```bash
 mvn test -Dlive.provider.tests=true
+```
+
+Local Ollama live tests are also gated, but they do not call paid providers:
+
+```bash
+mvn test -Dlocal.provider.tests=true
 ```
 
 ## Security And Data Handling

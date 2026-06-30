@@ -22,7 +22,8 @@ public record ProviderRunDiagnostics(
         String runHealth,
         double runConfidence,
         String degradedRunStatus,
-        EarlyStopDecision earlyStopDecision
+        EarlyStopDecision earlyStopDecision,
+        String providerMode
 ) {
     /** Compatibility constructor for traces created before outcome accounting existed. */
     public ProviderRunDiagnostics(int attemptedProviders,
@@ -33,19 +34,31 @@ public record ProviderRunDiagnostics(
                                   String degradedRunStatus) {
         this(attemptedProviders, attemptedProviders, validDraftProviders,
                 Math.max(0, attemptedProviders - validDraftProviders), 0, 0, 0,
-                providerCoverage, providerCoverage, runHealth, runConfidence, degradedRunStatus, null);
+                providerCoverage, providerCoverage, runHealth, runConfidence, degradedRunStatus, null, null);
     }
 
     public static ProviderRunDiagnostics from(List<DraftResult> drafts) {
-        return fromOutcomes(ProviderOutcome.fromDraftResults(drafts), null);
+        return fromOutcomes(ProviderOutcome.fromDraftResults(drafts), null, null);
     }
 
     public static ProviderRunDiagnostics from(List<DraftResult> drafts, EarlyStopDecision earlyStopDecision) {
-        return fromOutcomes(ProviderOutcome.fromDraftResults(drafts), earlyStopDecision);
+        return fromOutcomes(ProviderOutcome.fromDraftResults(drafts), earlyStopDecision, null);
+    }
+
+    public static ProviderRunDiagnostics from(List<DraftResult> drafts,
+                                              EarlyStopDecision earlyStopDecision,
+                                              String providerMode) {
+        return fromOutcomes(ProviderOutcome.fromDraftResults(drafts), earlyStopDecision, providerMode);
     }
 
     public static ProviderRunDiagnostics fromOutcomes(List<ProviderOutcome> outcomes,
                                                       EarlyStopDecision earlyStopDecision) {
+        return fromOutcomes(outcomes, earlyStopDecision, null);
+    }
+
+    public static ProviderRunDiagnostics fromOutcomes(List<ProviderOutcome> outcomes,
+                                                      EarlyStopDecision earlyStopDecision,
+                                                      String providerMode) {
         List<ProviderOutcome> safeOutcomes = outcomes == null ? List.of() : outcomes;
         int selected = safeOutcomes.size();
         int attempted = (int) safeOutcomes.stream().filter(ProviderOutcome::attempted).count();
@@ -73,6 +86,7 @@ public record ProviderRunDiagnostics(
             status = null;
         }
         return new ProviderRunDiagnostics(selected, attempted, valid, failed, skipped, earlySkipped, unavailable,
-                providerCoverage, attemptCoverage, runHealth, providerCoverage, status, earlyStopDecision);
+                providerCoverage, attemptCoverage, runHealth, providerCoverage, status, earlyStopDecision,
+                providerMode);
     }
 }

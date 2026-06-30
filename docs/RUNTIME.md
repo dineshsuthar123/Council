@@ -57,6 +57,86 @@ General and coding prompts use smaller fan-out for latency. Debugging and
 architecture prompts keep deeper fan-out because disagreement and failure-mode
 coverage matter more.
 
+## Provider Modes
+
+`COUNCIL_PROVIDER_MODE` controls which provider families can receive generation
+requests:
+
+| Mode | Behavior |
+| --- | --- |
+| `local_only` | Only `ollama-*` providers are selected. Hosted providers are not attempted. |
+| `free_first` | Default. Local Ollama providers are tried first; hosted providers are reserved for configured escalation paths. |
+| `hybrid` | Local and hosted providers can run together for deeper diversity. |
+| `premium` | Hosted providers are preferred; local providers can still act as cheap critics or summarizers. |
+
+The selected mode is persisted in trace run diagnostics and surfaced in health
+and provider status responses.
+
+## Ollama Local Provider Family
+
+Council can run without paid API credits by using Ollama's local `/api/chat`
+endpoint. Four logical providers are configured:
+
+| Provider id | Default model | Role |
+| --- | --- | --- |
+| `ollama-qwen-coder` | `qwen2.5-coder:7b` | Coding, backend drafts, pseudocode |
+| `ollama-deepseek` | `deepseek-r1:8b` | Reasoning critic, invariant review, hard drafts |
+| `ollama-llama` | `llama3.1:8b` | General reasoning and balanced drafts |
+| `ollama-gemma` | `gemma3:4b` | Summarization and fast cheap drafts |
+
+Install and pull the models:
+
+```bash
+ollama pull qwen2.5-coder:7b
+ollama pull deepseek-r1:8b
+ollama pull llama3.1:8b
+ollama pull gemma3:4b
+```
+
+Use this when Spring Boot runs directly on the host:
+
+```bash
+COUNCIL_PROVIDER_MODE=local_only
+OLLAMA_ENABLED=true
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+Use this when Council runs inside Docker Compose and Ollama runs on the Windows
+host:
+
+```bash
+COUNCIL_PROVIDER_MODE=local_only
+OLLAMA_ENABLED=true
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+LOCAL_ONLY_REQUEST_TIMEOUT_SECONDS=180
+LOCAL_ONLY_DRAFT_TIMEOUT_SECONDS=120
+LOCAL_ONLY_PER_PROVIDER_DEADLINE_SECONDS=90
+```
+
+`local_only` selects every enabled Ollama logical provider rather than applying
+the small hosted-provider fan-out caps. The longer `LOCAL_ONLY_*` budgets are
+used only in this mode and protect local CPU/GPU inference from the 12-22 second
+interactive deadlines used for hosted providers.
+
+Provider status checks `/api/tags` only. It does not run generation during
+normal health checks. If a model is missing, the status includes remediation
+such as:
+
+```text
+ollama pull qwen2.5-coder:7b
+```
+
+Optional live preflight can be enabled with `OLLAMA_PREFLIGHT_ENABLED=true`.
+The default suite never requires Ollama. To run the gated local smoke test:
+
+```bash
+mvn test -Dlocal.provider.tests=true
+```
+
+Local model limitations are intentional and visible: latency may be higher,
+answer quality may be below premium hosted models, and confidence/model
+agreement should be interpreted honestly from the judge output.
+
 ## Degraded Mode
 
 Budget stops and provider cancellations are persisted as failed `DraftResult`

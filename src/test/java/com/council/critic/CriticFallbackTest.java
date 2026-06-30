@@ -67,10 +67,12 @@ class CriticFallbackTest {
                 "Critique from deepseek", 0.2, Map.of(), List.of(), List.of(), List.of(), 300, "raw");
         when(deepseekAdapter.generateCritique(any())).thenReturn(deepseekResult);
 
-        when(registry.getAllAdapters()).thenReturn(Map.of(
+        Map<String, LlmAdapter> adapters = Map.of(
                 "gemini", geminiAdapter,
                 "deepseek", deepseekAdapter
-        ));
+        );
+        when(registry.getAllAdapters()).thenReturn(adapters);
+        when(registry.getAdaptersForCurrentMode()).thenReturn(adapters);
 
         CriticResult result = criticEngine.critique(buildRequest());
 
@@ -109,11 +111,13 @@ class CriticFallbackTest {
                 "Critique from mistral", 0.1, Map.of(), List.of(), List.of(), List.of(), 400, "raw");
         when(mistralAdapter.generateCritique(any())).thenReturn(mistralResult);
 
-        when(registry.getAllAdapters()).thenReturn(Map.of(
+        Map<String, LlmAdapter> adapters = Map.of(
                 "gemini", geminiAdapter,
                 "deepseek", deepseekAdapter,
                 "mistral", mistralAdapter
-        ));
+        );
+        when(registry.getAllAdapters()).thenReturn(adapters);
+        when(registry.getAdaptersForCurrentMode()).thenReturn(adapters);
 
         CriticResult result = criticEngine.critique(buildRequest());
 
@@ -126,6 +130,7 @@ class CriticFallbackTest {
     void failsOnlyWhenAllExhausted() {
         when(registry.getCriticAdapter("gemini")).thenReturn(Optional.empty());
         when(registry.getAllAdapters()).thenReturn(Map.of()); // no adapters at all
+        when(registry.getAdaptersForCurrentMode()).thenReturn(Map.of()); // no adapters in current mode
 
         CriticResult result = criticEngine.critique(buildRequest());
 
@@ -157,11 +162,13 @@ class CriticFallbackTest {
                 CriticResult.success("mistral", "mistral-large",
                         "OK", 0.0, Map.of(), List.of(), List.of(), List.of(), 200, "raw"));
 
-        when(registry.getAllAdapters()).thenReturn(Map.of(
+        Map<String, LlmAdapter> adapters = Map.of(
                 "gemini", gemini,
                 "deepseek", deepseek,
                 "mistral", mistral
-        ));
+        );
+        when(registry.getAllAdapters()).thenReturn(adapters);
+        when(registry.getAdaptersForCurrentMode()).thenReturn(adapters);
 
         CriticResult result = criticEngine.critique(buildRequest());
 
@@ -189,7 +196,9 @@ class CriticFallbackTest {
         LlmAdapter deepseek = mock(LlmAdapter.class);
         when(deepseek.providerName()).thenReturn("deepseek");
         when(deepseek.isEnabled()).thenReturn(true);
-        when(registry.getAllAdapters()).thenReturn(Map.of("gemini", gemini, "deepseek", deepseek));
+        Map<String, LlmAdapter> adapters = Map.of("gemini", gemini, "deepseek", deepseek);
+        when(registry.getAllAdapters()).thenReturn(adapters);
+        when(registry.getAdaptersForCurrentMode()).thenReturn(adapters);
 
         CriticResult result = criticEngine.critique(buildRequest());
 

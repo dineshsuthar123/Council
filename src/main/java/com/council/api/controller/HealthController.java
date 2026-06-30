@@ -106,7 +106,10 @@ public class HealthController {
                                 details == null ? null : details.preflightFailureCategory(),
                                 details == null ? null : details.preflightSafeMessage(),
                                 details == null ? null : details.preflightCheckedAt(),
-                                details == null ? null : details.preflightLatencyMs()
+                                details == null ? null : details.preflightLatencyMs(),
+                                details == null ? null : details.providerType(),
+                                details == null ? null : details.modelInstalled(),
+                                details == null ? null : details.remediation()
                         );
                     } else {
                         return new ProviderStatusResponse(
@@ -134,7 +137,10 @@ public class HealthController {
                                 details == null ? null : details.preflightFailureCategory(),
                                 details == null ? null : details.preflightSafeMessage(),
                                 details == null ? null : details.preflightCheckedAt(),
-                                details == null ? null : details.preflightLatencyMs()
+                                details == null ? null : details.preflightLatencyMs(),
+                                details == null ? null : details.providerType(),
+                                details == null ? null : details.modelInstalled(),
+                                details == null ? null : details.remediation()
                         );
                     }
                 })
@@ -165,9 +171,11 @@ public class HealthController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", available.isEmpty() ? "DEGRADED" : "UP");
         body.put("availableProviders", available.stream().map(LlmAdapter::providerName).toList());
+        body.put("providerMode", properties.getProviderMode().configValue());
         body.put("routingEnabled", registry.isRoutingEnabled());
         body.put("research", researchAvailability());
         body.put("blackbox", blackboxAvailability());
+        body.put("ollama", ollamaAvailability());
 
         Map<String, Object> cooldowns = new LinkedHashMap<>();
         circuitBreaker.getAllStates().forEach((name, state) -> {
@@ -202,6 +210,37 @@ public class HealthController {
             provider.put("timeoutMsConfigured", details.timeoutMsConfigured());
             provider.put("timeoutSource", details.timeoutSource());
             provider.put("configWarnings", details.configWarnings());
+            provider.put("preflightStatus", details.preflightStatus());
+            provider.put("preflightFailureCategory", details.preflightFailureCategory());
+            provider.put("preflightSafeMessage", details.preflightSafeMessage());
+            provider.put("preflightCheckedAt", details.preflightCheckedAt());
+            provider.put("preflightLatencyMs", details.preflightLatencyMs());
+            providers.put(providerId, provider);
+        });
+        return providers;
+    }
+
+    private Map<String, Object> ollamaAvailability() {
+        Map<String, Object> providers = new LinkedHashMap<>();
+        registry.getAllAdapters().forEach((providerId, adapter) -> {
+            if (!(adapter instanceof ProviderStatusAware statusAware)
+                    || !providerId.startsWith("ollama-")) {
+                return;
+            }
+            ProviderStatusDetails details = statusAware.providerStatusDetails();
+            Map<String, Object> provider = new LinkedHashMap<>();
+            provider.put("displayName", details.displayName());
+            provider.put("providerType", details.providerType());
+            provider.put("configured", details.configured());
+            provider.put("enabled", details.enabled());
+            provider.put("available", details.available());
+            provider.put("model", adapter.modelName());
+            provider.put("baseUrl", details.baseUrl());
+            provider.put("modelInstalled", details.modelInstalled());
+            provider.put("failureReason", details.failureReason());
+            provider.put("remediation", details.remediation());
+            provider.put("timeoutMsConfigured", details.timeoutMsConfigured());
+            provider.put("timeoutSource", details.timeoutSource());
             provider.put("preflightStatus", details.preflightStatus());
             provider.put("preflightFailureCategory", details.preflightFailureCategory());
             provider.put("preflightSafeMessage", details.preflightSafeMessage());

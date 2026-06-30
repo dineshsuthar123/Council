@@ -19,7 +19,10 @@ public record ProviderStatusDetails(
         String preflightFailureCategory,
         String preflightSafeMessage,
         String preflightCheckedAt,
-        Long preflightLatencyMs
+        Long preflightLatencyMs,
+        String providerType,
+        Boolean modelInstalled,
+        String remediation
 ) {
     public ProviderStatusDetails(String displayName,
                                  boolean configured,
@@ -28,7 +31,26 @@ public record ProviderStatusDetails(
                                  String baseUrl,
                                  String failureReason) {
         this(displayName, configured, enabled, available, baseUrl, failureReason,
-                null, null, List.of(), null, null, null, null, null);
+                null, null, List.of(), null, null, null, null, null, null, null, null);
+    }
+
+    public ProviderStatusDetails(String displayName,
+                                 boolean configured,
+                                 boolean enabled,
+                                 boolean available,
+                                 String baseUrl,
+                                 String failureReason,
+                                 Integer timeoutMsConfigured,
+                                 String timeoutSource,
+                                 List<String> configWarnings,
+                                 String preflightStatus,
+                                 String preflightFailureCategory,
+                                 String preflightSafeMessage,
+                                 String preflightCheckedAt,
+                                 Long preflightLatencyMs) {
+        this(displayName, configured, enabled, available, baseUrl, failureReason,
+                timeoutMsConfigured, timeoutSource, configWarnings, preflightStatus, preflightFailureCategory,
+                preflightSafeMessage, preflightCheckedAt, preflightLatencyMs, null, null, null);
     }
 
     public ProviderStatusDetails {

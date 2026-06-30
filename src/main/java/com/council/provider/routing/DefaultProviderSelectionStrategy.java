@@ -1,6 +1,7 @@
 package com.council.provider.routing;
 
 import com.council.config.CouncilProperties;
+import com.council.config.ProviderMode;
 import com.council.judge.TaskType;
 import com.council.provider.LlmAdapter;
 import org.slf4j.Logger;
@@ -33,16 +34,19 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
      * preferred (in order) because they produce stronger reasoning / system-design answers.
      */
     private static final List<String> TECHNICAL_PREFERRED_PROVIDERS =
-            List.of("deepseek", "openrouter", "mistral", "kimi", "gemini");
+            List.of("ollama-deepseek", "ollama-qwen-coder", "ollama-llama",
+                    "deepseek", "openrouter", "mistral", "kimi", "gemini");
 
     /**
      * For DEBUGGING prompts, prefer providers with strong analytical capabilities.
      */
     private static final List<String> DEBUGGING_PREFERRED_PROVIDERS =
-            List.of("deepseek", "mistral", "openrouter", "groq");
+            List.of("ollama-deepseek", "ollama-qwen-coder", "ollama-llama",
+                    "deepseek", "mistral", "openrouter", "groq");
 
     private final CouncilProperties.RoutingConfig routingConfig;
     private final CouncilProperties.OrchestratorConfig orchestratorConfig;
+    private final ProviderMode providerMode;
     private final ProviderConcurrencyLimiter concurrencyLimiter;
 
     /* last decision for observability (per-thread safe via volatile) */
@@ -52,6 +56,7 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
                                             ProviderConcurrencyLimiter concurrencyLimiter) {
         this.routingConfig = properties.getRouting();
         this.orchestratorConfig = properties.getOrchestrator();
+        this.providerMode = ProviderMode.safe(properties.getProviderMode());
         this.concurrencyLimiter = concurrencyLimiter;
     }
 
@@ -92,6 +97,11 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
                     return true;
                 })
                 .toList();
+
+        candidates = applyProviderModeCandidatePolicy(candidates);
+        if (providerMode == ProviderMode.LOCAL_ONLY && !candidates.isEmpty()) {
+            maxDrafts = Math.max(maxDrafts, candidates.size());
+        }
 
         // Apply task-aware ordering
         List<ProviderDescriptor> ordered = applyTaskAwareOrdering(candidates, taskType);
@@ -144,6 +154,8 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
     private List<ProviderDescriptor> applyTaskAwareOrdering(List<ProviderDescriptor> candidates,
                                                              TaskType taskType) {
         List<String> preferredOrder = switch (taskType) {
+            case CODING -> List.of("ollama-qwen-coder", "ollama-deepseek", "ollama-llama",
+                    "deepseek", "openrouter-qwen", "groq");
             case SYSTEM_DESIGN, BACKEND_ARCHITECTURE -> TECHNICAL_PREFERRED_PROVIDERS;
             case DEBUGGING -> DEBUGGING_PREFERRED_PROVIDERS;
             default -> List.of(); // use default priority ordering
@@ -152,8 +164,7 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
         if (preferredOrder.isEmpty()) {
             // Default: sort by priority then reliability
             return candidates.stream()
-                    .sorted(Comparator.comparingInt(ProviderDescriptor::priority)
-                            .thenComparing(Comparator.comparingDouble(ProviderDescriptor::reliability).reversed()))
+                    .sorted(modeAwareComparator())
                     .toList();
         }
 
@@ -167,9 +178,41 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
         return candidates.stream()
                 .sorted(Comparator.comparingInt(
                                 (ProviderDescriptor d) -> preferenceIndex.getOrDefault(d.name(), 1000))
+                        .thenComparing(this::providerModeRank)
                         .thenComparingInt(ProviderDescriptor::priority)
                         .thenComparing(Comparator.comparingDouble(ProviderDescriptor::reliability).reversed()))
                 .toList();
+    }
+
+    private List<ProviderDescriptor> applyProviderModeCandidatePolicy(List<ProviderDescriptor> candidates) {
+        List<ProviderDescriptor> allowed = candidates.stream()
+                .filter(d -> providerMode.allowsProvider(d.name()))
+                .toList();
+        if (providerMode == ProviderMode.FREE_FIRST) {
+            List<ProviderDescriptor> local = allowed.stream()
+                    .filter(d -> ProviderMode.isLocalProvider(d.name()))
+                    .toList();
+            if (!local.isEmpty()) {
+                return local;
+            }
+        }
+        return allowed;
+    }
+
+    private Comparator<ProviderDescriptor> modeAwareComparator() {
+        return Comparator.comparingInt(this::providerModeRank)
+                .thenComparingInt(ProviderDescriptor::priority)
+                .thenComparing(Comparator.comparingDouble(ProviderDescriptor::reliability).reversed());
+    }
+
+    private int providerModeRank(ProviderDescriptor descriptor) {
+        boolean local = ProviderMode.isLocalProvider(descriptor.name());
+        return switch (providerMode) {
+            case LOCAL_ONLY -> local ? 0 : 100;
+            case FREE_FIRST -> local ? 0 : 10;
+            case HYBRID -> 0;
+            case PREMIUM -> local ? 10 : 0;
+        };
     }
 
     private int maxDraftProviders(TaskType taskType) {
@@ -194,10 +237,10 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
                                                      Map<String, LlmAdapter> adapters,
                                                      String traceId) {
         Optional<ProviderDescriptor> critic = descriptors.stream()
+                .filter(d -> providerMode.allowsProvider(d.name()))
                 .filter(d -> d.hasRole(ProviderRole.CRITIC))
                 .filter(ProviderDescriptor::isAvailableForRouting)
-                .sorted(Comparator.comparingInt(ProviderDescriptor::priority)
-                        .thenComparing(Comparator.comparingDouble(ProviderDescriptor::reliability).reversed()))
+                .sorted(modeAwareComparator())
                 .findFirst();
 
         if (critic.isPresent()) {
@@ -219,9 +262,11 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
         // Fallback: try providers with CRITIC role from fallback chains
         for (ProviderDescriptor d : descriptors) {
             if (!d.hasRole(ProviderRole.CRITIC) || !d.isAvailableForRouting()) continue;
+            if (!providerMode.allowsProvider(d.name())) continue;
             for (String fb : d.fallbackProviders()) {
                 ProviderDescriptor fallback = descriptors.stream()
-                        .filter(fd -> fd.name().equals(fb) && fd.isAvailableForRouting())
+                        .filter(fd -> fd.name().equals(fb) && fd.isAvailableForRouting()
+                                && providerMode.allowsProvider(fd.name()))
                         .findFirst().orElse(null);
                 if (fallback != null && adapters.containsKey(fallback.name())) {
                     log.info("[routing] traceId={} critic fallback selected: {}", traceId, fallback.name());
@@ -260,6 +305,7 @@ public class DefaultProviderSelectionStrategy implements ProviderSelectionStrate
         Set<String> alreadyUsed = new HashSet<>(alreadyUsedProviders);
 
         List<ProviderDescriptor> escalation = descriptors.stream()
+                .filter(d -> providerMode.allowsProvider(d.name()))
                 .filter(d -> d.hasRole(ProviderRole.PREMIUM_ESCALATION))
                 .filter(ProviderDescriptor::isAvailableForRouting)
                 .filter(d -> !alreadyUsed.contains(d.name()))

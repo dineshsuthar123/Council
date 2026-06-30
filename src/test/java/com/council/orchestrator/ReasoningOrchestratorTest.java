@@ -2,6 +2,7 @@ package com.council.orchestrator;
 
 import com.council.api.dto.FinalResponse;
 import com.council.config.CouncilProperties;
+import com.council.config.ProviderMode;
 import com.council.critic.CriticEngine;
 import com.council.events.PipelineEventBroadcaster;
 import com.council.judge.DeterministicJudge;
@@ -16,6 +17,9 @@ import com.council.model.*;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderRegistry;
 import com.council.provider.routing.ProviderConcurrencyLimiter;
+import com.council.provider.routing.DefaultProviderSelectionStrategy;
+import com.council.provider.routing.ProviderDescriptor;
+import com.council.provider.routing.ProviderRole;
 import com.council.provider.routing.ProviderSelectionStrategy;
 import com.council.research.ResearchPack;
 import com.council.research.ResearchNeedDetector;
@@ -34,6 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -167,6 +172,94 @@ class ReasoningOrchestratorTest {
                 argThat(drafts -> drafts.stream().map(DraftResult::provider).toList()
                         .containsAll(List.of("blackbox-gpt55", "blackbox-claude-sonnet"))),
                 any(), any(), any(), anyLong());
+    }
+
+    @Test
+    @DisplayName("local_only mode attempts only Ollama providers and records provider mode")
+    void localOnlyAttemptsOnlyOllamaProviders() {
+        CouncilProperties props = new CouncilProperties();
+        props.setProviderMode(ProviderMode.LOCAL_ONLY);
+        props.getRouting().setEnabled(true);
+        props.getRouting().setMaxDraftProviders(4);
+        props.getOrchestrator().setDraftTimeoutSeconds(5);
+        props.getOrchestrator().setCriticTimeoutSeconds(5);
+        props.setProviders(Map.of(
+                "ollama-qwen-coder", providerConfig(0.72),
+                "ollama-deepseek", providerConfig(0.74),
+                "ollama-llama", providerConfig(0.70),
+                "ollama-gemma", providerConfig(0.66),
+                "blackbox-gpt55", providerConfig(0.90),
+                "groq", providerConfig(0.80)
+        ));
+
+        ProviderRegistry localRegistry = mock(ProviderRegistry.class);
+        when(localRegistry.isRoutingEnabled()).thenReturn(true);
+        when(localRegistry.providerMode()).thenReturn(ProviderMode.LOCAL_ONLY);
+        List<ProviderDescriptor> descriptors = List.of(
+                descriptor("ollama-qwen-coder", "qwen2.5-coder:7b", 10),
+                descriptor("ollama-deepseek", "deepseek-r1:8b", 11),
+                descriptor("ollama-llama", "llama3.1:8b", 12),
+                descriptor("ollama-gemma", "gemma3:4b", 13)
+        );
+        when(localRegistry.buildDescriptorsForCurrentMode()).thenReturn(descriptors);
+
+        LlmAdapter qwen = mockAdapter("ollama-qwen-coder", "qwen2.5-coder:7b",
+                DraftResult.success("ollama-qwen-coder", "qwen2.5-coder:7b",
+                        "Qwen local answer", "summary", List.of(), List.of(), 0.85, 100, "raw-qwen"));
+        LlmAdapter deepseek = mockAdapter("ollama-deepseek", "deepseek-r1:8b",
+                DraftResult.success("ollama-deepseek", "deepseek-r1:8b",
+                        "DeepSeek local answer", "summary", List.of(), List.of(), 0.83, 110, "raw-deepseek"));
+        LlmAdapter llama = mockAdapter("ollama-llama", "llama3.1:8b",
+                DraftResult.success("ollama-llama", "llama3.1:8b",
+                        "Llama local answer", "summary", List.of(), List.of(), 0.82, 120, "raw-llama"));
+        LlmAdapter gemma = mockAdapter("ollama-gemma", "gemma3:4b",
+                DraftResult.success("ollama-gemma", "gemma3:4b",
+                        "Gemma local answer", "summary", List.of(), List.of(), 0.78, 130, "raw-gemma"));
+        LlmAdapter blackbox = mockAdapter("blackbox-gpt55", "blackbox/gpt",
+                DraftResult.success("blackbox-gpt55", "blackbox/gpt",
+                        "External answer", "summary", List.of(), List.of(), 0.99, 1, "raw-external"));
+        LlmAdapter groq = mockAdapter("groq", "llama-3.3",
+                DraftResult.success("groq", "llama-3.3",
+                        "External Groq answer", "summary", List.of(), List.of(), 0.99, 1, "raw-groq"));
+        Map<String, LlmAdapter> modeAdapters = new LinkedHashMap<>();
+        modeAdapters.put(qwen.providerName(), qwen);
+        modeAdapters.put(deepseek.providerName(), deepseek);
+        modeAdapters.put(llama.providerName(), llama);
+        modeAdapters.put(gemma.providerName(), gemma);
+        when(localRegistry.getAdaptersForCurrentMode()).thenReturn(modeAdapters);
+
+        CriticEngine localCritic = mock(CriticEngine.class);
+        VerifierEngine localVerifier = mock(VerifierEngine.class);
+        SynthesizerEngine localSynthesizer = mock(SynthesizerEngine.class);
+        when(localCritic.critique(any())).thenReturn(
+                CriticResult.failure("ollama-deepseek", "deepseek-r1:8b", "critic unavailable", 0));
+        when(localVerifier.verify(anyString(), anyString(), anyList())).thenReturn(
+                VerifierBatchResult.success(Map.of()));
+        when(localSynthesizer.synthesize(any())).thenReturn(
+                SynthesisResult.failure("none", "none", "synthesis unavailable", 0));
+        ResearchService localResearch = mock(ResearchService.class);
+        when(localResearch.buildEvidencePack(anyString(), any())).thenReturn(ResearchPack.notRequired());
+
+        ReasoningOrchestrator localOnlyOrchestrator = new ReasoningOrchestrator(
+                localRegistry, localCritic, localVerifier, localSynthesizer,
+                new DeterministicJudge(props, new SpecificityScorer()), new PromptClassifier(),
+                mock(TraceService.class), new OrchestrationMetrics(new SimpleMeterRegistry()), props,
+                new DefaultProviderSelectionStrategy(props, new ProviderConcurrencyLimiter()),
+                new ProviderConcurrencyLimiter(), mock(PipelineEventBroadcaster.class),
+                localResearch, new ResearchPromptAugmenter());
+
+        FinalResponse response = localOnlyOrchestrator.reason("Explain a local-only smoke test.");
+
+        assertTrue(response.usedProviders().stream().allMatch(provider -> provider.startsWith("ollama-")));
+        assertEquals("local_only", response.runDiagnostics().providerMode());
+        verify(qwen).generateDraft(any());
+        verify(deepseek).generateDraft(any());
+        verify(llama).generateDraft(any());
+        verify(gemma).generateDraft(any());
+        verify(blackbox, never()).generateDraft(any());
+        verify(groq, never()).generateDraft(any());
+        verify(localRegistry, never()).buildDescriptors();
+        verify(localRegistry, never()).getAllAdapters();
     }
 
     @Test
@@ -707,6 +800,41 @@ class ReasoningOrchestratorTest {
     }
 
     @Test
+    @DisplayName("local_only uses the local Ollama budget instead of a shorter provider default")
+    void localOnlyProviderDeadlineUsesLocalBudgetForOllama() {
+        CouncilProperties props = new CouncilProperties();
+        props.setProviderMode(ProviderMode.LOCAL_ONLY);
+        props.getOrchestrator().setDraftTimeoutSeconds(3);
+        props.getOrchestrator().setRequestTimeoutSeconds(3);
+        props.getOrchestrator().setPerProviderDeadlineSeconds(1);
+        props.getOrchestrator().setLocalOnlyDraftTimeoutSeconds(3);
+        props.getOrchestrator().setLocalOnlyRequestTimeoutSeconds(3);
+        props.getOrchestrator().setLocalOnlyPerProviderDeadlineSeconds(2);
+        CouncilProperties.ProviderConfig providerConfig = new CouncilProperties.ProviderConfig();
+        providerConfig.setTimeoutSeconds(1);
+        providerConfig.setReliability(0.70);
+        props.setProviders(Map.of("ollama-gemma", providerConfig));
+
+        ReasoningOrchestrator localOnlyOrchestrator = orchestratorWithProperties(props);
+        LlmAdapter local = mock(LlmAdapter.class);
+        when(local.providerName()).thenReturn("ollama-gemma");
+        when(local.modelName()).thenReturn("gemma3:4b");
+        when(local.isEnabled()).thenReturn(true);
+        when(local.generateDraft(any())).thenAnswer(invocation -> {
+            Thread.sleep(1_300);
+            return DraftResult.success("ollama-gemma", "gemma3:4b",
+                    "local answer", "summary", List.of(), List.of(), 0.70, 1_300, "raw");
+        });
+
+        List<DraftResult> results = localOnlyOrchestrator.runDraftPhase(
+                List.of(local), DraftRequest.of("trace-local-budget", "slow local query"));
+
+        assertEquals(1, results.size());
+        assertTrue(results.getFirst().isSuccess(),
+                "local_only should honor its local provider budget for Ollama providers");
+    }
+
+    @Test
     @DisplayName("Early stop marks unstarted providers as skipped when a sufficient general answer arrives")
     void earlyStopSkipsPendingDraftsWhenQualityIsSufficient() {
         ReasoningOrchestrator earlyStopOrchestrator =
@@ -781,6 +909,19 @@ class ReasoningOrchestratorTest {
         when(adapter.isEnabled()).thenReturn(true);
         when(adapter.generateDraft(any())).thenReturn(result);
         return adapter;
+    }
+
+    private CouncilProperties.ProviderConfig providerConfig(double reliability) {
+        CouncilProperties.ProviderConfig config = new CouncilProperties.ProviderConfig();
+        config.setEnabled(true);
+        config.setReliability(reliability);
+        config.setTimeoutMs(60_000);
+        return config;
+    }
+
+    private ProviderDescriptor descriptor(String provider, String model, int priority) {
+        return new ProviderDescriptor(provider, provider, model, true,
+                List.of(ProviderRole.DRAFT), priority, 0.72, 60, 1, List.of(), false, 0.0);
     }
 
     private String urlShortenerIncidentQuery() {
@@ -884,14 +1025,6 @@ class ReasoningOrchestratorTest {
                                                               int perProviderDeadlineSeconds,
                                                               boolean earlyStopEnabled,
                                                               double earlyStopThreshold) {
-        ProviderRegistry localRegistry = mock(ProviderRegistry.class);
-        CriticEngine localCritic = mock(CriticEngine.class);
-        VerifierEngine localVerifier = mock(VerifierEngine.class);
-        SynthesizerEngine localSynthesizer = mock(SynthesizerEngine.class);
-        TraceService localTraceService = mock(TraceService.class);
-        OrchestrationMetrics localMetrics = new OrchestrationMetrics(new SimpleMeterRegistry());
-        ProviderSelectionStrategy localSelectionStrategy = mock(ProviderSelectionStrategy.class);
-
         CouncilProperties props = new CouncilProperties();
         props.getOrchestrator().setDraftTimeoutSeconds(draftTimeoutSeconds);
         props.getOrchestrator().setRequestTimeoutSeconds(requestTimeoutSeconds);
@@ -901,6 +1034,19 @@ class ReasoningOrchestratorTest {
         props.getOrchestrator().setCriticTimeoutSeconds(1);
         props.getOrchestrator().setVerifierTimeoutSeconds(1);
         props.getOrchestrator().setSynthesisTimeoutSeconds(1);
+
+        return orchestratorWithProperties(props);
+    }
+
+    private ReasoningOrchestrator orchestratorWithProperties(CouncilProperties props) {
+        ProviderRegistry localRegistry = mock(ProviderRegistry.class);
+        when(localRegistry.providerMode()).thenReturn(props.getProviderMode());
+        CriticEngine localCritic = mock(CriticEngine.class);
+        VerifierEngine localVerifier = mock(VerifierEngine.class);
+        SynthesizerEngine localSynthesizer = mock(SynthesizerEngine.class);
+        TraceService localTraceService = mock(TraceService.class);
+        OrchestrationMetrics localMetrics = new OrchestrationMetrics(new SimpleMeterRegistry());
+        ProviderSelectionStrategy localSelectionStrategy = mock(ProviderSelectionStrategy.class);
 
         return new ReasoningOrchestrator(localRegistry, localCritic, localVerifier, localSynthesizer,
                 new DeterministicJudge(props, new SpecificityScorer()), new PromptClassifier(),
