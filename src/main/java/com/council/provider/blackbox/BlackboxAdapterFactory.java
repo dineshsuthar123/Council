@@ -11,6 +11,7 @@ import com.council.provider.routing.ProviderRole;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -36,7 +37,29 @@ public class BlackboxAdapterFactory {
     private final ProviderCallExecutor callExecutor;
     private final OrchestrationMetrics metrics;
     private final RestClientFactory restClientFactory;
+    private final BlackboxProviderPreflightValidator preflightValidator;
     private volatile List<LlmAdapter> adapters;
+
+    @Autowired
+    public BlackboxAdapterFactory(BlackboxProviderProperties blackboxProperties,
+                                  CouncilProperties properties,
+                                  ObjectMapper mapper,
+                                  JsonResponseNormalizer normalizer,
+                                  ResponseMapper responseMapper,
+                                  ProviderCallExecutor callExecutor,
+                                  OrchestrationMetrics metrics,
+                                  RestClientFactory restClientFactory,
+                                  BlackboxProviderPreflightValidator preflightValidator) {
+        this.blackboxProperties = blackboxProperties;
+        this.properties = properties;
+        this.mapper = mapper;
+        this.normalizer = normalizer;
+        this.responseMapper = responseMapper;
+        this.callExecutor = callExecutor;
+        this.metrics = metrics;
+        this.restClientFactory = restClientFactory;
+        this.preflightValidator = preflightValidator;
+    }
 
     public BlackboxAdapterFactory(BlackboxProviderProperties blackboxProperties,
                                   CouncilProperties properties,
@@ -46,14 +69,9 @@ public class BlackboxAdapterFactory {
                                   ProviderCallExecutor callExecutor,
                                   OrchestrationMetrics metrics,
                                   RestClientFactory restClientFactory) {
-        this.blackboxProperties = blackboxProperties;
-        this.properties = properties;
-        this.mapper = mapper;
-        this.normalizer = normalizer;
-        this.responseMapper = responseMapper;
-        this.callExecutor = callExecutor;
-        this.metrics = metrics;
-        this.restClientFactory = restClientFactory;
+        this(blackboxProperties, properties, mapper, normalizer, responseMapper, callExecutor, metrics,
+                restClientFactory, new BlackboxProviderPreflightValidator(blackboxProperties, mapper,
+                        restClientFactory));
     }
 
     public List<LlmAdapter> adapters() {
@@ -91,9 +109,8 @@ public class BlackboxAdapterFactory {
             if (!modelConfig.isEnabled() && !hasKey) {
                 continue;
             }
-            if (modelConfig.getProviderId() == null || modelConfig.getProviderId().isBlank()
-                    || modelConfig.getModel() == null || modelConfig.getModel().isBlank()) {
-                log.warn("Ignoring invalid Blackbox provider configuration: provider id and model are required");
+            if (modelConfig.getProviderId() == null || modelConfig.getProviderId().isBlank()) {
+                log.warn("Ignoring invalid Blackbox provider configuration: provider id is required");
                 continue;
             }
             if (!providerIds.add(modelConfig.getProviderId())) {
@@ -108,7 +125,8 @@ public class BlackboxAdapterFactory {
             properties.setProviders(providerConfigs);
             properties.getRouting().setProviderRoutes(routes);
             created.add(new BlackboxOpenAiCompatibleAdapter(modelConfig, properties, mapper, normalizer,
-                    responseMapper, callExecutor, metrics, restClientFactory));
+                    responseMapper, callExecutor, metrics, restClientFactory, preflightValidator,
+                    blackboxProperties.getPreflight().isEnabled()));
             log.info("Configured Blackbox logical provider id={} model={} available={}",
                     modelConfig.getProviderId(), modelConfig.getModel(), providerConfig.isUsable());
         }
@@ -123,7 +141,8 @@ public class BlackboxAdapterFactory {
         CouncilProperties.ProviderConfig config = new CouncilProperties.ProviderConfig();
         // Enabled when explicitly enabled OR when a key is present (key acts as implicit opt-in).
         boolean hasKey = modelConfig.getApiKey() != null && !modelConfig.getApiKey().isBlank();
-        config.setEnabled(modelConfig.isEnabled() || hasKey);
+        boolean hasModel = modelConfig.getModel() != null && !modelConfig.getModel().isBlank();
+        config.setEnabled((modelConfig.isEnabled() || hasKey) && hasModel);
         config.setApiKey(modelConfig.getApiKey());
         config.setBaseUrl(blackboxProperties.getBaseUrl());
         config.setModel(modelConfig.getModel());

@@ -436,7 +436,12 @@ function renderProviderSkeleton() {
 }
 
 function renderProviderRow(provider, scorecard) {
-  const statusClass = provider.enabled && provider.availableForRouting !== false && !provider.coolingDown ? "up" : provider.coolingDown ? "degraded" : "down";
+  const warnings = Array.isArray(provider.configWarnings) ? provider.configWarnings : [];
+  const preflightStatus = provider.preflightStatus || "NOT_RUN";
+  const preflightFailed = preflightStatus === "FAILED";
+  const statusClass = provider.enabled && provider.availableForRouting !== false && !provider.coolingDown && !preflightFailed
+    ? (warnings.length ? "degraded" : "up")
+    : provider.coolingDown || warnings.length ? "degraded" : "down";
   const roles = Array.isArray(provider.roles) && provider.roles.length
     ? provider.roles.map((role) => `<span class="role-tag">${escapeHtml(role)}</span>`).join("")
     : `<span class="role-tag">GENERAL</span>`;
@@ -448,12 +453,19 @@ function renderProviderRow(provider, scorecard) {
   const confidence = scorecard
     ? `avg ${scorecard.avgLatencyMs} ms | conf ${Math.round(scorecard.avgConfidence * 100)}%`
     : `${Math.round((provider.recentFailureRate || 0) * 100)}% recent failure | ${total} calls`;
+  const preflight = provider.preflightStatus
+    ? `preflight ${humanize(provider.preflightStatus)}${provider.preflightFailureCategory ? ` (${humanize(provider.preflightFailureCategory)})` : ""}`
+    : "preflight not available";
+  const timeout = provider.timeoutMsConfigured ? `timeout ${provider.timeoutMsConfigured} ms` : "";
+  const warningLine = warnings.length ? `<div class="provider-warning">${escapeHtml(warnings.join(" "))}</div>` : "";
 
   return `
     <div class="provider-row">
       <div>
         <div class="provider-name"><span class="status-dot ${statusClass}"></span>${escapeHtml(provider.provider)}</div>
         <div class="provider-model">${escapeHtml(provider.model || "model unavailable")}</div>
+        <div class="provider-model">${escapeHtml([preflight, timeout, provider.timeoutSource].filter(Boolean).join(" - "))}</div>
+        ${warningLine}
       </div>
       <div class="provider-roles">${roles}</div>
       <div class="provider-metric">
@@ -892,6 +904,15 @@ function dimensionGrid(dimensions) {
     ["unsupported_claim_penalty", "Supported claims"],
     ["conflict_handling", "Conflict handling"],
     ["answer_completeness", "Completeness"],
+    ["claim_evidence_consistency", "Claim evidence"],
+    ["source_boundary_integrity", "Source boundary"],
+    ["final_contract_compliance", "Final contract"],
+    ["research_pipeline_concreteness", "Research pseudocode"],
+    ["enumerated_section_coverage", "Section coverage"],
+    ["final_recommendation_sentence_count", "Final rec sentences"],
+    ["final_recommendation_required_min", "Final rec min"],
+    ["final_recommendation_required_max", "Final rec max"],
+    ["final_recommendation_contract_satisfied", "Final rec contract"],
     ["invariant_payment_transfer", "Payment invariants"],
     ["invariant_url_shortener", "URL invariants"],
     ["invariant_research_evidence", "Research invariants"],
@@ -907,6 +928,18 @@ function dimensionGrid(dimensions) {
   const rows = [...order, ...extraRows]
     .filter(([key]) => dimensions[key] != null)
     .map(([key, label]) => {
+      if (isDimensionMetadata(key)) {
+        const raw = Number(dimensions[key]);
+        const display = Number.isFinite(raw) ? Math.round(raw).toString() : String(dimensions[key]);
+        return `
+        <div class="dimension-row meta">
+          <div class="dimension-label">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(display)}</strong>
+          </div>
+        </div>
+      `;
+      }
       const value = scoreValue(dimensions[key]);
       const pct = Math.round(value * 100);
       const tone = pct < 60 ? " low" : pct < 80 ? " medium" : "";
@@ -1127,6 +1160,13 @@ function providerOutcomePanel(draftResults) {
     const circuit = diagnostics.circuitBreakerState && diagnostics.circuitBreakerState !== "UNKNOWN"
       ? `circuit ${diagnostics.circuitBreakerState.toLowerCase()}`
       : "";
+    const timeout = diagnostics.timeoutMsConfigured
+      ? `timeout ${diagnostics.timeoutMsConfigured} ms${diagnostics.timeoutSource ? ` ${humanize(diagnostics.timeoutSource)}` : ""}`
+      : "";
+    const requestShape = [
+      diagnostics.promptTokenEstimate ? `~${diagnostics.promptTokenEstimate} prompt tokens` : "",
+      diagnostics.requestSizeBytes ? `${diagnostics.requestSizeBytes} bytes` : ""
+    ].filter(Boolean).join(" - ");
     const group = ok ? "used" : skipped ? "skipped" : unavailable ? "unavailable" : "failed";
     return { group, status, markup: `
       <div class="provider-outcome-row">
@@ -1137,7 +1177,7 @@ function providerOutcomePanel(draftResults) {
         <div>
           ${ok ? "" : `<span class="failure-category">${escapeHtml(category)}</span>`}
           <p class="${ok ? "" : "failure-reason"}">${escapeHtml(reason)}</p>
-          ${ok ? "" : `<small class="failure-meta">${escapeHtml([humanize(status), retry, circuit, diagnostics.httpStatus ? `HTTP ${diagnostics.httpStatus}` : ""].filter(Boolean).join(" - "))}</small>`}
+          ${ok ? "" : `<small class="failure-meta">${escapeHtml([humanize(status), retry, circuit, diagnostics.httpStatus ? `HTTP ${diagnostics.httpStatus}` : "", timeout, requestShape].filter(Boolean).join(" - "))}</small>`}
         </div>
       </div>
     ` };
@@ -1204,6 +1244,14 @@ function runHealthPanel(diagnostics) {
       </div>
     </div>
   `;
+}
+
+function isDimensionMetadata(key) {
+  return [
+    "final_recommendation_sentence_count",
+    "final_recommendation_required_min",
+    "final_recommendation_required_max"
+  ].includes(key);
 }
 
 function scoreValue(value) {

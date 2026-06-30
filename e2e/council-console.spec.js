@@ -42,11 +42,15 @@ test.beforeEach(async ({ page }) => {
           totalFailures: 3,
           roles: ["DRAFT", "SYNTHESIS"],
           availableConcurrencyPermits: 4,
-          availableForRouting: true
+          availableForRouting: true,
+          timeoutMsConfigured: 60000,
+          timeoutSource: "DEFAULT",
+          preflightStatus: "PASSED",
+          preflightLatencyMs: 122
         },
         {
-          provider: "nvidia",
-          model: "nemotron",
+          provider: "blackbox-gpt55-pro",
+          model: "blackboxai/openai/gpt-5.4-pro",
           enabled: true,
           coolingDown: true,
           cooldownUntil: "2026-06-18T10:00:00Z",
@@ -56,7 +60,13 @@ test.beforeEach(async ({ page }) => {
           totalFailures: 10,
           roles: ["DRAFT"],
           availableConcurrencyPermits: 0,
-          availableForRouting: false
+          availableForRouting: false,
+          timeoutMsConfigured: 90000,
+          timeoutSource: "PROVIDER_OVERRIDE",
+          preflightStatus: "FAILED",
+          preflightFailureCategory: "MODEL_NOT_FOUND_OR_UNAVAILABLE",
+          preflightSafeMessage: "Model may be unavailable for this account or model ID may be invalid.",
+          configWarnings: ["Provider id/display name suggests GPT-5.5 Pro but configured model is GPT-5.4 Pro."]
         }
       ]);
     }
@@ -126,6 +136,7 @@ test("prompt submission renders structured answer, score cards, code, and source
   await expect(page.getByText(/Skipped: early stop after valid draft confidence/)).toBeVisible();
   await expect(page.getByText("not attempted")).toBeVisible();
   await expect(page.getByText("Quality dimensions")).toBeVisible();
+  await expect(page.getByText("Final rec sentences")).toBeVisible();
   await expect(page.getByText("No source pack was available")).toBeVisible();
   await expect(page.locator("pre.code-block")).toContainText("cached == DELETED");
 });
@@ -139,6 +150,9 @@ test("admin unlock shows provider failures, trace list, and trace detail scoring
 
   await expect(page.locator("#admin-auth-status")).toHaveText("Ops unlocked");
   await expect(page.getByText("groq")).toBeVisible();
+  await expect(page.getByText("preflight Passed")).toBeVisible();
+  await expect(page.getByText("preflight Failed (Model Not Found Or Unavailable)")).toBeVisible();
+  await expect(page.getByText("Provider id/display name suggests GPT-5.5 Pro")).toBeVisible();
   await expect(page.getByText("URL shortener deletion prompt")).toBeVisible();
 
   await page.getByText("URL shortener deletion prompt").click();
@@ -146,7 +160,8 @@ test("admin unlock shows provider failures, trace list, and trace detail scoring
   await expect(page.getByRole("heading", { name: /11111111/ })).toBeVisible();
   await expect(page.getByText("Provider outcomes")).toBeVisible();
   await expect(page.getByText("Timed out at 20s deadline")).toBeVisible();
-  await expect(page.getByText("Timeout")).toBeVisible();
+  await expect(page.locator(".failure-category").filter({ hasText: "Timeout" })).toBeVisible();
+  await expect(page.getByText(/timeout 20000 ms Provider Override/)).toBeVisible();
   await expect(page.getByText("Winner confidence")).toBeVisible();
   await expect(page.getByText("Only one valid draft was available; this is selection certainty")).toBeVisible();
 });
@@ -237,6 +252,10 @@ return singleflight(alias, () -> primaryDb.findByAlias(alias));
       deletion_safety: 0.84,
       replica_lag_awareness: 0.78,
       pseudocode: 0.75,
+      final_recommendation_sentence_count: 7,
+      final_recommendation_required_min: 8,
+      final_recommendation_required_max: 12,
+      final_recommendation_contract_satisfied: 0,
       custom_future_dimension: 0.58
     },
     research: {
@@ -311,7 +330,11 @@ function timeoutFailure() {
     latencyMs: 20000,
     retryAttempted: true,
     attemptCount: 2,
-    circuitBreakerState: "CLOSED"
+    circuitBreakerState: "CLOSED",
+    timeoutMsConfigured: 20000,
+    timeoutSource: "PROVIDER_OVERRIDE",
+    promptTokenEstimate: 900,
+    requestSizeBytes: 3600
   };
 }
 

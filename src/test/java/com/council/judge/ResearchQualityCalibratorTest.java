@@ -218,6 +218,56 @@ class ResearchQualityCalibratorTest {
                 violation.invariantId().contains("official_sources_beat_old_blog")));
     }
 
+    @Test
+    void observedCostWithS6AndOfficialPricingWithS2PassPricingInvariant() {
+        ResearchPack pack = ResearchPack.withEvidence(
+                "Prompt includes provider pricing and internal cost metrics.", List.of(), metricPromptSources(), null, List.of());
+        String prompt = "Give a provider migration recommendation with current pricing and observed workload cost.";
+        String answer = """
+                Official token pricing is lower for Provider B according to the official pricing source [S2].
+                Internal traces show Provider B has lower observed cost per 1K requests at $0.21 versus $0.42 [S6].
+                Keep Provider A as default until reliability and p95 gates pass [S6].
+                """;
+
+        var result = new InvariantViolationCritic().evaluate(prompt, answer, pack);
+        ResearchQualityCalibrator.QualityScore score =
+                ResearchQualityCalibrator.qualityScore(prompt, answer, pack, 0.90, result);
+
+        assertFalse(result.violations().stream().anyMatch(violation ->
+                violation.invariantId().contains("official_sources_beat_old_blog")));
+        assertTrue(score.dimensions().get("citation_accuracy") >= 0.90);
+    }
+
+    @Test
+    void listPricingClaimCitingOnlyInternalTraceFailsPricingInvariant() {
+        ResearchPack pack = ResearchPack.withEvidence(
+                "Prompt includes provider pricing and internal cost metrics.", List.of(), metricPromptSources(), null, List.of());
+        var result = new InvariantViolationCritic().evaluate(
+                "Give a provider migration recommendation with current pricing.",
+                "Provider B list pricing is lower and should drive the migration [S6].", pack);
+
+        assertTrue(result.violations().stream().anyMatch(violation ->
+                violation.invariantId().contains("official_sources_beat_old_blog")));
+    }
+
+    @Test
+    void uncitedAndGenericTrendPricingClaimsFailPricingChecks() {
+        ResearchPack pack = ResearchPack.withEvidence(
+                "Prompt includes provider pricing and internal cost metrics.", List.of(), metricPromptSources(), null, List.of());
+        var noCitation = new InvariantViolationCritic().evaluate(
+                "Give a provider migration recommendation with current pricing.",
+                "Provider B pricing is lower, so migrate.", pack);
+        var genericTrend = new InvariantViolationCritic().evaluate(
+                "Give a provider migration recommendation with current pricing.",
+                "AI trend posts imply Provider B pricing is lower, so migrate [S3].", pack);
+
+        assertTrue(noCitation.violations().stream().anyMatch(violation ->
+                violation.invariantId().contains("official_sources_beat_old_blog")
+                        || violation.invariantId().contains("current_fact_claims_require_evidence")));
+        assertTrue(genericTrend.violations().stream().anyMatch(violation ->
+                violation.invariantId().contains("official_sources_beat_old_blog")));
+    }
+
     private ResearchPack packWithSources() {
         return ResearchPack.withSources(
                 "Prompt asks for current information.",

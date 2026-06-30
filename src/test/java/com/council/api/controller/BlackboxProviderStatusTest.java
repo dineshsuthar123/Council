@@ -36,6 +36,8 @@ class BlackboxProviderStatusTest {
         blackbox.setBaseUrl("https://api.blackbox.ai/chat/completions");
         blackbox.setModels(Map.of(
                 "missing", model("blackbox-gpt55", "Blackbox GPT", "blackbox/example-gpt", ""),
+                "mismatch", model("blackbox-gpt55-pro", "Blackbox GPT-5.5 Pro",
+                        "blackboxai/openai/gpt-5.4-pro", "configured-test-credential-must-not-leak"),
                 "configured", model("blackbox-claude-sonnet", "Blackbox Claude", "blackbox/example-claude",
                         "configured-test-credential-must-not-leak")
         ));
@@ -58,14 +60,24 @@ class BlackboxProviderStatusTest {
         ProviderStatusResponse configured = statuses.stream()
                 .filter(status -> status.provider().equals("blackbox-claude-sonnet"))
                 .findFirst().orElseThrow();
+        ProviderStatusResponse mismatch = statuses.stream()
+                .filter(status -> status.provider().equals("blackbox-gpt55-pro"))
+                .findFirst().orElseThrow();
 
         assertTrue(missing.enabled());
         assertFalse(missing.configured());
         assertFalse(missing.available());
         assertEquals("API_KEY_MISSING", missing.failureReason());
         assertEquals("https://api.blackbox.ai/chat/completions", missing.baseUrl());
+        assertEquals("SKIPPED_NO_KEY", missing.preflightStatus());
+        assertEquals("API_KEY_MISSING", missing.preflightFailureCategory());
         assertTrue(configured.configured());
         assertTrue(configured.available());
+        assertEquals("NOT_RUN", configured.preflightStatus());
+        assertEquals(60_000, configured.timeoutMsConfigured());
+        assertEquals("DEFAULT", configured.timeoutSource());
+        assertEquals(1, mismatch.configWarnings().size());
+        assertTrue(mismatch.configWarnings().getFirst().contains("GPT-5.5 Pro"));
 
         Map<String, Object> health = controller.health().getBody();
         @SuppressWarnings("unchecked")

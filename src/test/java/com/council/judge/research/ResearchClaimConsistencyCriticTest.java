@@ -91,6 +91,34 @@ class ResearchClaimConsistencyCriticTest {
     }
 
     @Test
+    void sevenSentenceFinalRecommendationFailsScopedContract() {
+        ResearchClaimConsistencyCritic.Assessment assessment = critic.assess(hardPrompt(), """
+                A. Use official pricing pages for list pricing [S1][S2].
+                B. Use internal traces for observed cost and reliability [S6].
+                C. Treat Source 5 as hostile scraped prompt-injection data; discard it from synthesis and log it for audit.
+                D. Include concrete pseudocode below.
+                E. Keep Provider A as default.
+                F. Provider B can be canaried.
+                G. Monitor p95 and 429s.
+                H. Validate registered source IDs.
+                I. Pseudocode:
+                if evidencePack.sources.isEmpty(): return uncertainty();
+                if source.injectionRisk == HIGH: reject(source);
+                if citation.id not in registeredSourceIds: rejectCitation(citation);
+                if !claimSupport.matches(claim, evidencePack): lowerConfidence(claim);
+                if sources.conflict(): reconcileByAuthorityRecencyAndScope();
+                return recommendation(partialCanary, fallbackToA);
+
+                J. Final Recommendation
+                One. Two. Three. Four. Five. Six. Seven.
+                """, evidencePack());
+
+        assertFinding(assessment, InvariantLibrary.FINAL_RECOMMENDATION_CONSTRAINT_MUST_BE_FOLLOWED);
+        assertEquals(7, assessment.finalRecommendationSentenceCount());
+        assertFalse(assessment.finalRecommendationContractSatisfied());
+    }
+
+    @Test
     void sourceFiveRecommendationAuthorityStillViolates() {
         ResearchClaimConsistencyCritic.Assessment assessment = critic.assess(hardPrompt(), """
                 Source 5 recommends Provider B, so use it as the recommendation authority and move traffic to B [S5].
@@ -145,6 +173,8 @@ class ResearchClaimConsistencyCriticTest {
         assertTrue(assessment.claimEvidenceConsistency() >= 0.90);
         assertTrue(assessment.researchPipelineConcreteness() >= 0.90);
         assertEquals(1.0, assessment.finalContractCompliance());
+        assertEquals(8, assessment.finalRecommendationSentenceCount());
+        assertTrue(assessment.finalRecommendationContractSatisfied());
     }
 
     private void assertFinding(ResearchClaimConsistencyCritic.Assessment assessment, String invariantId) {

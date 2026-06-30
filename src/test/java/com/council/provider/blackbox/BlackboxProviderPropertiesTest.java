@@ -34,16 +34,24 @@ class BlackboxProviderPropertiesTest {
                 "council.providers.blackbox.models.gpt55.provider-id=blackbox-gpt55",
                 "council.providers.blackbox.models.gpt55.display-name=Blackbox GPT",
                 "council.providers.blackbox.models.gpt55.model=custom/gpt-model",
+                "council.providers.blackbox.models.gpt55.timeout-ms=61000",
                 "council.providers.blackbox.models.claude-sonnet.enabled=true",
                 "council.providers.blackbox.models.claude-sonnet.provider-id=blackbox-claude-sonnet",
                 "council.providers.blackbox.models.claude-sonnet.display-name=Blackbox Claude",
-                "council.providers.blackbox.models.claude-sonnet.model=custom/claude-model"
+                "council.providers.blackbox.models.claude-sonnet.model=custom/claude-model",
+                "council.providers.blackbox.preflight.enabled=true",
+                "council.providers.blackbox.preflight.timeout-ms=9000",
+                "council.providers.blackbox.preflight.max-tokens=7"
         ).run(context -> {
             BlackboxProviderProperties properties = context.getBean(BlackboxProviderProperties.class);
 
             assertEquals("https://blackbox.example/chat/completions", properties.getBaseUrl());
             assertEquals(2, properties.getModels().size());
             assertEquals("custom/gpt-model", properties.getModels().get("gpt55").getModel());
+            assertEquals(61000, properties.getModels().get("gpt55").getTimeoutMs());
+            assertTrue(properties.getPreflight().isEnabled());
+            assertEquals(9000, properties.getPreflight().getTimeoutMs());
+            assertEquals(7, properties.getPreflight().getMaxTokens());
             assertEquals("blackbox-claude-sonnet",
                     properties.getModels().get("claude-sonnet").getProviderId());
         });
@@ -73,6 +81,27 @@ class BlackboxProviderPropertiesTest {
         assertFalse(statusAware.providerStatusDetails().configured());
         assertFalse(statusAware.providerStatusDetails().available());
         assertEquals("API_KEY_MISSING", statusAware.providerStatusDetails().failureReason());
+        assertEquals("SKIPPED_NO_KEY", statusAware.providerStatusDetails().preflightStatus());
+        assertEquals("API_KEY_MISSING", statusAware.providerStatusDetails().preflightFailureCategory());
+    }
+
+    @Test
+    void timeoutFallbackAndMismatchWarningAreExposedSafely() {
+        BlackboxProviderProperties blackbox = new BlackboxProviderProperties();
+        blackbox.getDefaults().setTimeoutMs(45_000);
+        BlackboxProviderProperties.ModelConfig mismatch = model(
+                "blackbox-gpt55-pro", "blackboxai/openai/gpt-5.4-pro", true, "key");
+        mismatch.setDisplayName("Blackbox GPT-5.5 Pro");
+        blackbox.setModels(java.util.Map.of("gpt55pro", mismatch));
+
+        List<LlmAdapter> adapters = factory(blackbox).adapters();
+
+        ProviderStatusAware statusAware = assertInstanceOf(ProviderStatusAware.class, adapters.getFirst());
+        assertEquals(45_000, statusAware.providerStatusDetails().timeoutMsConfigured());
+        assertEquals("DEFAULT", statusAware.providerStatusDetails().timeoutSource());
+        assertEquals("NOT_RUN", statusAware.providerStatusDetails().preflightStatus());
+        assertEquals(1, statusAware.providerStatusDetails().configWarnings().size());
+        assertTrue(statusAware.providerStatusDetails().configWarnings().getFirst().contains("GPT-5.5 Pro"));
     }
 
     private BlackboxAdapterFactory factory(BlackboxProviderProperties blackbox) {

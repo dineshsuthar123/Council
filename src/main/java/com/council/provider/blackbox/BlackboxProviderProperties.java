@@ -14,6 +14,7 @@ public class BlackboxProviderProperties {
     private boolean enabled = true;
     private String baseUrl = "https://api.blackbox.ai/chat/completions";
     private Defaults defaults = new Defaults();
+    private Preflight preflight = new Preflight();
     private Map<String, ModelConfig> models = new LinkedHashMap<>();
 
     public boolean isEnabled() { return enabled; }
@@ -22,6 +23,8 @@ public class BlackboxProviderProperties {
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
     public Defaults getDefaults() { return defaults; }
     public void setDefaults(Defaults defaults) { this.defaults = defaults == null ? new Defaults() : defaults; }
+    public Preflight getPreflight() { return preflight; }
+    public void setPreflight(Preflight preflight) { this.preflight = preflight == null ? new Preflight() : preflight; }
     public Map<String, ModelConfig> getModels() { return models; }
     public void setModels(Map<String, ModelConfig> models) {
         this.models = models == null ? new LinkedHashMap<>() : new LinkedHashMap<>(models);
@@ -44,6 +47,19 @@ public class BlackboxProviderProperties {
         public void setPriority(int priority) { this.priority = priority; }
         public double getReliability() { return reliability; }
         public void setReliability(double reliability) { this.reliability = reliability; }
+    }
+
+    public static class Preflight {
+        private boolean enabled = false;
+        private int timeoutMs = 10_000;
+        private int maxTokens = 8;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getTimeoutMs() { return timeoutMs; }
+        public void setTimeoutMs(int timeoutMs) { this.timeoutMs = timeoutMs; }
+        public int getMaxTokens() { return maxTokens; }
+        public void setMaxTokens(int maxTokens) { this.maxTokens = maxTokens; }
     }
 
     public static class ModelConfig {

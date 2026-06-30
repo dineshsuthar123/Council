@@ -22,7 +22,11 @@ public record ProviderFailureDetails(
         boolean retryAttempted,
         int attemptCount,
         String circuitBreakerState,
-        String timestamp
+        String timestamp,
+        Integer timeoutMsConfigured,
+        String timeoutSource,
+        Integer promptTokenEstimate,
+        Integer requestSizeBytes
 ) {
     public ProviderFailureDetails {
         failureCategory = failureCategory == null ? ProviderFailureCategory.UNKNOWN : failureCategory;
@@ -30,6 +34,22 @@ public record ProviderFailureDetails(
         attemptCount = Math.max(1, attemptCount);
         circuitBreakerState = circuitBreakerState == null || circuitBreakerState.isBlank()
                 ? "UNKNOWN" : circuitBreakerState.trim();
+    }
+
+    public ProviderFailureDetails(String providerId,
+                                  String displayName,
+                                  String model,
+                                  String baseUrlHost,
+                                  ProviderFailureCategory failureCategory,
+                                  String safeMessage,
+                                  Integer httpStatus,
+                                  long latencyMs,
+                                  boolean retryAttempted,
+                                  int attemptCount,
+                                  String circuitBreakerState,
+                                  String timestamp) {
+        this(providerId, displayName, model, baseUrlHost, failureCategory, safeMessage, httpStatus, latencyMs,
+                retryAttempted, attemptCount, circuitBreakerState, timestamp, null, null, null, null);
     }
 
     public static ProviderFailureDetails local(String providerId,
@@ -40,7 +60,7 @@ public record ProviderFailureDetails(
         return new ProviderFailureDetails(providerId, providerId, model, null, category, safeMessage,
                 null, latencyMs, false, 1,
                 category == ProviderFailureCategory.CIRCUIT_OPEN ? "OPEN" : "UNKNOWN",
-                java.time.Instant.now().toString());
+                java.time.Instant.now().toString(), null, null, null, null);
     }
 
     public static List<ProviderFailureDetails> fromDraftResults(List<DraftResult> drafts) {

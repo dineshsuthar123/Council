@@ -19,8 +19,6 @@ import java.util.regex.Pattern;
 public final class ResearchClaimConsistencyCritic {
 
     private static final Pattern CITATION = Pattern.compile("\\[S(\\d+)]", Pattern.CASE_INSENSITIVE);
-    private static final Pattern FINAL_RECOMMENDATION = Pattern.compile(
-            "(?ims)^\\s*(?:#{1,6}\\s*)?(?:\\*\\*)?final\\s+recommendation(?:\\*\\*)?\\s*:?\\s*(.*)$");
     private static final Pattern ENUMERATED_SECTION = Pattern.compile(
             "(?im)^\\s*(?:#{1,6}\\s*)?([A-J])\\s*(?:[.)]|[-:])\\s*");
     private static final Pattern INSTRUCTION_LINE = Pattern.compile(
@@ -34,13 +32,20 @@ public final class ResearchClaimConsistencyCritic {
                     + "\\s*(?:\\*\\*)?\\s*:?.*$");
 
     private final ResearchMetricExtractor metricExtractor;
+    private final FinalRecommendationContractChecker finalRecommendationChecker;
 
     public ResearchClaimConsistencyCritic() {
-        this(new ResearchMetricExtractor());
+        this(new ResearchMetricExtractor(), new FinalRecommendationContractChecker());
     }
 
     public ResearchClaimConsistencyCritic(ResearchMetricExtractor metricExtractor) {
+        this(metricExtractor, new FinalRecommendationContractChecker());
+    }
+
+    public ResearchClaimConsistencyCritic(ResearchMetricExtractor metricExtractor,
+                                          FinalRecommendationContractChecker finalRecommendationChecker) {
         this.metricExtractor = metricExtractor;
+        this.finalRecommendationChecker = finalRecommendationChecker;
     }
 
     public Assessment assess(String prompt, String answer, ResearchPack pack) {
@@ -100,11 +105,13 @@ public final class ResearchClaimConsistencyCritic {
                     "Use A-J headings or a clearly mapped structure, including the final recommendation section."));
         }
 
-        double finalContract = finalRecommendationCompliance(promptText, answer);
-        if (asksForEightToTwelveSentences(promptText) && finalContract < 1.0) {
+        FinalRecommendationContractChecker.ContractResult finalContract =
+                finalRecommendationChecker.evaluate(prompt, answer);
+        double finalContractScore = finalContract.satisfied() ? 1.0 : 0.60;
+        if (finalContract.applicable() && !finalContract.satisfied()) {
             findings.add(finding(InvariantLibrary.FINAL_RECOMMENDATION_CONSTRAINT_MUST_BE_FOLLOWED,
                     "Prompt requires an 8-12 sentence final recommendation, but the final recommendation section misses "
-                            + "that sentence contract.",
+                            + "that sentence contract. Counted " + finalContract.sentenceCount() + " sentence(s).",
                     "Make the final recommendation 8-12 complete sentences; if there is no dedicated section, the whole "
                             + "answer is evaluated."));
         }
@@ -119,7 +126,10 @@ public final class ResearchClaimConsistencyCritic {
         double claimConsistency = claimConsistencyScore(reliabilityOverstated, latencyOverstated, citationIssues);
         double boundaryIntegrity = sourceBoundaryOvercaptured(pack) ? 0.20 : 1.0;
         return new Assessment(metrics, List.copyOf(findings), List.copyOf(citationIssues), claimConsistency,
-                boundaryIntegrity, finalContract, pipelineConcreteness, sectionCoverage);
+                boundaryIntegrity, finalContractScore, pipelineConcreteness, sectionCoverage,
+                finalContract.sentenceCount(), finalContract.requiredMinSentences(),
+                finalContract.requiredMaxSentences(), finalContract.satisfied(),
+                finalContract.sectionPreview());
     }
 
     private List<String> citationAlignmentIssues(String answer,
@@ -323,8 +333,7 @@ public final class ResearchClaimConsistencyCritic {
     }
 
     private String finalRecommendationSection(String answer) {
-        Matcher matcher = FINAL_RECOMMENDATION.matcher(answer == null ? "" : answer);
-        return matcher.find() ? matcher.group(1).trim() : answer == null ? "" : answer;
+        return finalRecommendationChecker.finalRecommendationSection(answer);
     }
 
     private boolean sourceBoundaryOvercaptured(ResearchPack pack) {
@@ -429,6 +438,11 @@ public final class ResearchClaimConsistencyCritic {
             double sourceBoundaryIntegrity,
             double finalContractCompliance,
             double researchPipelineConcreteness,
-            double enumeratedSectionCoverage
+            double enumeratedSectionCoverage,
+            int finalRecommendationSentenceCount,
+            int requiredMinSentences,
+            int requiredMaxSentences,
+            boolean finalRecommendationContractSatisfied,
+            String finalRecommendationSectionPreview
     ) {}
 }

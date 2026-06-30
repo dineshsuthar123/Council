@@ -27,7 +27,11 @@ public record ProviderOutcome(
         boolean retryAttempted,
         Integer httpStatus,
         String circuitBreakerState,
-        String timestamp
+        String timestamp,
+        Integer timeoutMsConfigured,
+        String timeoutSource,
+        Integer promptTokenEstimate,
+        Integer requestSizeBytes
 ) {
     public ProviderOutcome {
         status = status == null ? ProviderOutcomeStatus.FAILED : status;
@@ -63,7 +67,11 @@ public record ProviderOutcome(
                 details != null && details.retryAttempted(),
                 details == null ? null : details.httpStatus(),
                 details == null ? null : details.circuitBreakerState(),
-                details == null ? Instant.now().toString() : details.timestamp());
+                details == null ? Instant.now().toString() : details.timestamp(),
+                details == null ? null : details.timeoutMsConfigured(),
+                details == null ? null : details.timeoutSource(),
+                details == null ? null : details.promptTokenEstimate(),
+                details == null ? null : details.requestSizeBytes());
     }
 
     public static List<ProviderOutcome> fromDraftResults(List<DraftResult> drafts) {

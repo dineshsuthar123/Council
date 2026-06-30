@@ -6,6 +6,7 @@ import com.council.api.dto.ProviderScorecardResponse;
 import com.council.config.CouncilProperties;
 import com.council.metrics.ProviderScorecardService;
 import com.council.provider.LlmAdapter;
+import com.council.provider.ProviderPreflightAware;
 import com.council.provider.ProviderRegistry;
 import com.council.provider.ProviderStatusAware;
 import com.council.provider.ProviderStatusDetails;
@@ -57,7 +58,8 @@ public class HealthController {
     /* ── GET /providers/status ─────────────────────────────────────── */
 
     @GetMapping("/providers/status")
-    public ResponseEntity<List<ProviderStatusResponse>> providerStatus() {
+    public ResponseEntity<List<ProviderStatusResponse>> providerStatus(
+            @RequestParam(defaultValue = "false") boolean refreshPreflight) {
         // Build descriptor map for routing metadata (if routing enabled)
         Map<String, ProviderDescriptor> descriptorMap = registry.isRoutingEnabled()
                 ? registry.buildDescriptors().stream()
@@ -70,8 +72,7 @@ public class HealthController {
                     LlmAdapter adapter = entry.getValue();
                     ProviderCooldownState state = circuitBreaker.getState(name);
                     ProviderDescriptor desc = descriptorMap.get(name);
-                    ProviderStatusDetails details = adapter instanceof ProviderStatusAware statusAware
-                            ? statusAware.providerStatusDetails() : null;
+                    ProviderStatusDetails details = providerStatusDetails(adapter, refreshPreflight);
                     boolean enabled = details == null ? adapter.isEnabled() : details.enabled();
 
                     if (desc != null) {
@@ -97,7 +98,15 @@ public class HealthController {
                                 details == null ? null : details.configured(),
                                 details == null ? null : details.available(),
                                 details == null ? null : details.baseUrl(),
-                                details == null ? null : details.failureReason()
+                                details == null ? null : details.failureReason(),
+                                details == null ? null : details.timeoutMsConfigured(),
+                                details == null ? null : details.timeoutSource(),
+                                details == null ? null : details.configWarnings(),
+                                details == null ? null : details.preflightStatus(),
+                                details == null ? null : details.preflightFailureCategory(),
+                                details == null ? null : details.preflightSafeMessage(),
+                                details == null ? null : details.preflightCheckedAt(),
+                                details == null ? null : details.preflightLatencyMs()
                         );
                     } else {
                         return new ProviderStatusResponse(
@@ -117,12 +126,29 @@ public class HealthController {
                                 details == null ? null : details.configured(),
                                 details == null ? null : details.available(),
                                 details == null ? null : details.baseUrl(),
-                                details == null ? null : details.failureReason()
+                                details == null ? null : details.failureReason(),
+                                details == null ? null : details.timeoutMsConfigured(),
+                                details == null ? null : details.timeoutSource(),
+                                details == null ? null : details.configWarnings(),
+                                details == null ? null : details.preflightStatus(),
+                                details == null ? null : details.preflightFailureCategory(),
+                                details == null ? null : details.preflightSafeMessage(),
+                                details == null ? null : details.preflightCheckedAt(),
+                                details == null ? null : details.preflightLatencyMs()
                         );
                     }
                 })
                 .toList();
         return ResponseEntity.ok(statuses);
+    }
+
+    public ResponseEntity<List<ProviderStatusResponse>> providerStatus() {
+        return providerStatus(false);
+    }
+
+    @PostMapping("/providers/preflight")
+    public ResponseEntity<List<ProviderStatusResponse>> refreshProviderPreflight() {
+        return providerStatus(true);
     }
 
     @GetMapping("/providers/scorecards")
@@ -173,9 +199,24 @@ public class HealthController {
             provider.put("model", adapter.modelName());
             provider.put("baseUrl", details.baseUrl());
             provider.put("failureReason", details.failureReason());
+            provider.put("timeoutMsConfigured", details.timeoutMsConfigured());
+            provider.put("timeoutSource", details.timeoutSource());
+            provider.put("configWarnings", details.configWarnings());
+            provider.put("preflightStatus", details.preflightStatus());
+            provider.put("preflightFailureCategory", details.preflightFailureCategory());
+            provider.put("preflightSafeMessage", details.preflightSafeMessage());
+            provider.put("preflightCheckedAt", details.preflightCheckedAt());
+            provider.put("preflightLatencyMs", details.preflightLatencyMs());
             providers.put(providerId, provider);
         });
         return providers;
+    }
+
+    private ProviderStatusDetails providerStatusDetails(LlmAdapter adapter, boolean refreshPreflight) {
+        if (refreshPreflight && adapter instanceof ProviderPreflightAware preflightAware) {
+            return preflightAware.runPreflight();
+        }
+        return adapter instanceof ProviderStatusAware statusAware ? statusAware.providerStatusDetails() : null;
     }
 
     private Map<String, Object> researchAvailability() {

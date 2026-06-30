@@ -84,6 +84,16 @@ public final class ResearchQualityCalibrator {
         dimensions.put("final_contract_compliance", consistency.finalContractCompliance());
         dimensions.put("research_pipeline_concreteness", consistency.researchPipelineConcreteness());
         dimensions.put("enumerated_section_coverage", consistency.enumeratedSectionCoverage());
+        if (consistency.requiredMinSentences() > 0) {
+            dimensions.put("final_recommendation_sentence_count",
+                    (double) consistency.finalRecommendationSentenceCount());
+            dimensions.put("final_recommendation_required_min",
+                    (double) consistency.requiredMinSentences());
+            dimensions.put("final_recommendation_required_max",
+                    (double) consistency.requiredMaxSentences());
+            dimensions.put("final_recommendation_contract_satisfied",
+                    consistency.finalRecommendationContractSatisfied() ? 1.0 : 0.0);
+        }
 
         double weighted = (dimensions.get("source_quality") * 0.14)
                 + (dimensions.get("citation_accuracy") * 0.18)
@@ -311,8 +321,11 @@ public final class ResearchQualityCalibrator {
                         && citations.contains(source.id()));
         boolean explicitlyObservedCost = containsAny(text, "observed cost", "effective cost", "internal trace",
                 "workload cost", "cost per 1k", "cost per 1,000", "measured cost");
+        boolean onlyObservedCostClaim = internalObservedCostCited && explicitlyObservedCost
+                && !containsAny(text, "official pricing", "list pricing", "published pricing",
+                "current pricing", "token pricing", "price per token", "price per 1m", "price per million");
         if (internalObservedCostCited && explicitlyObservedCost) {
-            return false;
+            return !onlyObservedCostClaim && !officialCited;
         }
         boolean publishedListPricingClaim = containsAny(text, "official pricing", "list pricing", "published pricing",
                 "current pricing", "token pricing", "price per token", "price per 1m", "price per million");

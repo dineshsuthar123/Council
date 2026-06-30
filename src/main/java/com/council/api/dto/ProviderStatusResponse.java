@@ -31,7 +31,15 @@ public record ProviderStatusResponse(
         Boolean configured,
         Boolean available,
         String baseUrl,
-        String failureReason
+        String failureReason,
+        Integer timeoutMsConfigured,
+        String timeoutSource,
+        List<String> configWarnings,
+        String preflightStatus,
+        String preflightFailureCategory,
+        String preflightSafeMessage,
+        String preflightCheckedAt,
+        Long preflightLatencyMs
 ) {
     /**
      * Compact constructor for legacy (non-routing) usage.
@@ -45,7 +53,8 @@ public record ProviderStatusResponse(
                 consecutive429Count, recentFailureRate, totalSuccesses, totalFailures,
                 lastSuccess, lastFailure,
                 null, null, null, null, null, null,
-                null, null, null, null, null);
+                null, null, null, null, null,
+                null, null, null, null, null, null, null, null);
     }
 
     public ProviderStatusResponse(String provider, String model, boolean enabled,
@@ -61,6 +70,7 @@ public record ProviderStatusResponse(
                 lastSuccess, lastFailure,
                 roles, priority, maxConcurrency, availableConcurrencyPermits, fallbackProviders,
                 availableForRouting,
-                null, null, null, null, null);
+                null, null, null, null, null,
+                null, null, null, null, null, null, null, null);
     }
 }

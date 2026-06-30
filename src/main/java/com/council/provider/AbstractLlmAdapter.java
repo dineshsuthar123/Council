@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 /**
@@ -92,7 +93,7 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
             }
             log.warn("[{}] Draft generation failed after {}ms: {}", provider, latency, e.getMessage());
             return DraftResult.failure(provider, config.getModel(), safeFailureMessage(e), latency,
-                    failureDetails(e, latency));
+                    failureDetails(e, latency, prompt));
         } finally {
             MDC.remove(CouncilConstants.MDC_PROVIDER);
         }
@@ -232,7 +233,7 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
         return provider;
     }
 
-    private ProviderFailureDetails failureDetails(Exception error, long latencyMs) {
+    private ProviderFailureDetails failureDetails(Exception error, long latencyMs, String prompt) {
         ProviderException providerException = findProviderException(error);
         ProviderFailureCategory category = providerException == null
                 ? (error instanceof JsonNormalizationException
@@ -250,7 +251,11 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
                 providerException != null && providerException.isRetryAttempted(),
                 providerException == null ? 1 : providerException.getAttemptCount(),
                 providerException != null && providerException.isCircuitOpen() ? "OPEN" : "CLOSED",
-                Instant.now().toString());
+                Instant.now().toString(),
+                config.getEffectiveTimeoutMillis(),
+                config.getTimeoutMs() != null && config.getTimeoutMs() > 0 ? "PROVIDER_OVERRIDE" : "DEFAULT",
+                estimatePromptTokens(prompt),
+                prompt == null ? null : prompt.getBytes(StandardCharsets.UTF_8).length);
     }
 
     private ProviderException findProviderException(Throwable error) {
@@ -284,6 +289,13 @@ public abstract class AbstractLlmAdapter implements LlmAdapter {
         } catch (IllegalArgumentException ignored) {
             return "configured";
         }
+    }
+
+    private Integer estimatePromptTokens(String prompt) {
+        if (prompt == null || prompt.isBlank()) {
+            return null;
+        }
+        return Math.max(1, (int) Math.ceil(prompt.length() / 4.0));
     }
 }
 
