@@ -28,7 +28,22 @@ public class RestClientFactory {
      * @param defaultHeaders headers added to every request (may be empty)
      */
     public RestClient create(String baseUrl, int timeoutSeconds, Map<String, String> defaultHeaders) {
-        Duration readTimeout = resolveReadTimeout(timeoutSeconds);
+        int timeoutMillis = timeoutSeconds <= 0
+                ? (int) DEFAULT_READ_TIMEOUT.toMillis()
+                : timeoutSeconds * 1000;
+        return createWithTimeoutMillis(baseUrl, timeoutMillis, defaultHeaders);
+    }
+
+    /**
+     * Variant for provider families that expose millisecond precision in their external configuration.
+     */
+    public RestClient createWithTimeoutMillis(String baseUrl,
+                                              int timeoutMillis,
+                                              Map<String, String> defaultHeaders) {
+        Duration configuredTimeout = timeoutMillis <= 0
+                ? DEFAULT_READ_TIMEOUT
+                : Duration.ofMillis(timeoutMillis);
+        Duration readTimeout = resolveReadTimeout(configuredTimeout);
         HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(HARD_CONNECT_TIMEOUT)
             .build();
@@ -47,11 +62,7 @@ public class RestClientFactory {
         return builder.build();
     }
 
-    private Duration resolveReadTimeout(int timeoutSeconds) {
-        if (timeoutSeconds <= 0) {
-            return DEFAULT_READ_TIMEOUT;
-        }
-        Duration configured = Duration.ofSeconds(timeoutSeconds);
+    private Duration resolveReadTimeout(Duration configured) {
         return configured.compareTo(MAX_READ_TIMEOUT) > 0 ? MAX_READ_TIMEOUT : configured;
     }
 }

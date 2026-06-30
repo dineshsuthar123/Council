@@ -21,6 +21,7 @@ public class ResearchService {
     private final ResearchQueryPlanner queryPlanner;
     private final ResearchClient researchClient;
     private final PromptProvidedEvidenceParser promptEvidenceParser;
+    private final ResearchSourceRelevanceScorer relevanceScorer;
 
     public ResearchService(CouncilProperties properties,
                            ResearchNeedDetector detector,
@@ -32,6 +33,7 @@ public class ResearchService {
         this.queryPlanner = queryPlanner;
         this.researchClient = researchClient;
         this.promptEvidenceParser = promptEvidenceParser;
+        this.relevanceScorer = new ResearchSourceRelevanceScorer();
     }
 
     public ResearchPack buildEvidencePack(String userQuery, TaskType taskType) {
@@ -71,14 +73,19 @@ public class ResearchService {
 
         try {
             List<ResearchSource> sources = researchClient.search(queries, properties.getResearch().getMaxResults());
-            List<ResearchSource> combined = combine(promptSources, sources);
+            ExternalSourceSelection selection = selectRelevantExternalSources(userQuery, taskType, sources);
+            List<ResearchSource> combined = combine(promptSources, selection.included());
             if (combined.isEmpty()) {
-                return ResearchPack.unavailable(reason, queries, "Research provider returned no usable sources");
+                return ResearchPack.withEvidence(reason, queries, List.of(),
+                        "Research provider returned no relevant sources", selection.warnings(), selection.excluded());
             }
             log.info("[research] Built evidence pack for taskType={} with {} sources (promptProvided={})",
                     taskType, combined.size(), promptSources.size());
-            return ResearchPack.withEvidence(reason, queries, combined, null,
-                    promptSources.isEmpty() ? List.of() : List.of("Using mixed prompt-provided and external evidence"));
+            List<String> warnings = new java.util.ArrayList<>(selection.warnings());
+            if (!promptSources.isEmpty() && !selection.included().isEmpty()) {
+                warnings.add("Using mixed prompt-provided and external evidence");
+            }
+            return ResearchPack.withEvidence(reason, queries, combined, null, warnings, selection.excluded());
         } catch (Exception e) {
             log.warn("[research] Evidence pack unavailable: {}", e.getMessage());
             if (!promptSources.isEmpty()) {
@@ -127,6 +134,39 @@ public class ResearchService {
         return new ResearchSource(id, source.title(), source.url(), source.domain(), source.snippet(),
                 source.publishedAt(), source.score(), source.sourceType(), source.origin(),
                 source.providedAt(), source.updatedAt(), source.authorityScore(), source.recencyScore(),
-                source.injectionRisk(), source.supportsCurrentFacts(), source.metadata());
+                source.injectionRisk(), source.supportsCurrentFacts(), source.metadata(), source.relevanceScore(),
+                source.relevanceReason(), source.excludedReason());
+    }
+
+    private ExternalSourceSelection selectRelevantExternalSources(String userQuery,
+                                                                   TaskType taskType,
+                                                                   List<ResearchSource> sources) {
+        if (sources == null || sources.isEmpty()) {
+            return new ExternalSourceSelection(List.of(), List.of(), List.of());
+        }
+        List<ResearchSource> included = new java.util.ArrayList<>();
+        List<ResearchSource> excluded = new java.util.ArrayList<>();
+        for (ResearchSource source : sources) {
+            ResearchSourceRelevanceScorer.Assessment assessment = relevanceScorer.assess(userQuery, taskType, source);
+            ResearchSource scored = new ResearchSource(source.id(), source.title(), source.url(), source.domain(),
+                    source.snippet(), source.publishedAt(), source.score(), source.sourceType(), source.origin(),
+                    source.providedAt(), source.updatedAt(), source.authorityScore(), source.recencyScore(),
+                    source.injectionRisk(), source.supportsCurrentFacts(), source.metadata(),
+                    assessment.relevanceScore(), assessment.relevanceReason(), assessment.excludedReason());
+            if (assessment.isIncluded()) {
+                included.add(scored);
+            } else {
+                excluded.add(scored);
+            }
+        }
+        List<String> warnings = excluded.isEmpty()
+                ? List.of()
+                : List.of("External search returned low-relevance sources; ignored " + excluded.size() + " sources.");
+        return new ExternalSourceSelection(List.copyOf(included), List.copyOf(excluded), warnings);
+    }
+
+    private record ExternalSourceSelection(List<ResearchSource> included,
+                                           List<ResearchSource> excluded,
+                                           List<String> warnings) {
     }
 }

@@ -76,3 +76,67 @@ answer quality, winner confidence, model agreement, and rubric dimensions.
 
 Trace redaction, retention, export outbox, operator auth, and browser smoke test
 expectations are documented in [TRACE_OPERATIONS.md](TRACE_OPERATIONS.md).
+
+## Blackbox AI Provider Family
+
+Blackbox AI is configured as a provider family under
+`council.providers.blackbox`. Each enabled logical model becomes a separate
+Council provider, so it participates independently in drafting, ranking,
+scorecards, traces, circuit breaking, and provider diagnostics.
+
+Start with an entry in `.env` (which is ignored by Git):
+
+```bash
+BLACKBOX_GPT55_ENABLED=true
+BLACKBOX_GPT55_API_KEY=your-key-here
+BLACKBOX_GPT55_MODEL=blackboxai/openai/gpt-5.5
+```
+
+The full placeholder list is in `.env.example`. One Blackbox key can be used
+for multiple logical models, while separate keys may be used for intentional
+quota isolation. Do not use multiple keys or accounts to bypass provider rate
+limits, and never commit a real key.
+
+The model identifiers in the default configuration are examples only. Confirm
+their availability in the Blackbox account/dashboard before enabling them.
+Qwen remains an OpenRouter provider unless it is explicitly available and
+configured in Blackbox. An enabled Blackbox model without a key remains visible
+in provider status as unavailable with `API_KEY_MISSING`; it does not fail app
+startup or receive routed traffic.
+
+### Blackbox Preflight And Timeouts
+
+Blackbox live preflight is disabled by default so app startup, local tests, and
+forked PR CI do not consume quota:
+
+```bash
+BLACKBOX_PREFLIGHT_ENABLED=false
+BLACKBOX_PREFLIGHT_TIMEOUT_MS=10000
+BLACKBOX_PREFLIGHT_MAX_TOKENS=8
+```
+
+Operators can trigger a bounded validation pass from the admin API:
+
+```bash
+curl -u admin:your-password -X POST http://localhost:8080/api/v1/providers/preflight
+```
+
+The preflight uses a tiny "Reply with OK." request and persists only safe
+metadata: provider id, model id, status, failure category, checked-at timestamp,
+latency, and config warnings. API keys, Authorization headers, prompt bodies,
+and raw upstream responses are not stored or rendered.
+
+Long-running Blackbox routes can be tuned independently:
+
+```bash
+BLACKBOX_GPT55_TIMEOUT_MS=60000
+BLACKBOX_GPT55_PRO_TIMEOUT_MS=90000
+BLACKBOX_CLAUDE_SONNET_TIMEOUT_MS=60000
+BLACKBOX_CLAUDE_OPUS_TIMEOUT_MS=90000
+BLACKBOX_GEMINI_TIMEOUT_MS=45000
+BLACKBOX_NEMOTRON_TIMEOUT_MS=60000
+```
+
+Provider status and traces expose the configured timeout, timeout source, and
+request-size diagnostics so a 30s timeout is distinguishable from a model ID,
+quota, schema, or auth problem.

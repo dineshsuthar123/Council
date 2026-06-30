@@ -1,6 +1,7 @@
 package com.council.provider.openai;
 
 import com.council.common.exception.ProviderException;
+import com.council.common.exception.ProviderFailureCategory;
 import com.council.common.exception.RateLimitException;
 import com.council.config.CouncilProperties;
 import com.council.config.RestClientFactory;
@@ -16,6 +17,9 @@ import org.springframework.http.MediaType;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -46,9 +50,9 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
             if (extraHeaders != null) {
                 headers.putAll(extraHeaders);
             }
-            this.restClient = restClientFactory.create(
+            this.restClient = restClientFactory.createWithTimeoutMillis(
                     config.getBaseUrl(),
-                    config.getTimeoutSeconds(),
+                    config.getEffectiveTimeoutMillis(),
                     headers);
         } else {
             this.restClient = null;
@@ -77,7 +81,8 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
     @Override
     protected String callApi(String prompt) {
         if (restClient == null) {
-            throw new ProviderException(provider, provider + " adapter is not configured");
+            throw new ProviderException(provider, provider + " adapter is not configured",
+                    ProviderFailureCategory.DISABLED);
         }
         try {
             Map<String, Object> body = buildRequestBody(prompt);
@@ -100,10 +105,42 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
                         log.debug("[{}] HTTP 429 Rate-Limited", provider);
                         throw new RateLimitException(provider);
                     })
+                    .onStatus(status -> status.value() == 401 || status.value() == 403, (req, resp) -> {
+                        log.debug("[{}] HTTP {} authentication failure", provider, resp.getStatusCode());
+                        throw new ProviderException(provider,
+                                "Provider authentication failed (HTTP " + resp.getStatusCode().value() + ")",
+                                ProviderFailureCategory.AUTH_FAILED, resp.getStatusCode().value(), null);
+                    })
+                    .onStatus(status -> status.value() == 404, (req, resp) -> {
+                        log.debug("[{}] HTTP 404 model or endpoint unavailable", provider);
+                        throw new ProviderException(provider,
+                                "Provider model or endpoint is unavailable (HTTP 404)",
+                                ProviderFailureCategory.MODEL_NOT_FOUND_OR_UNAVAILABLE,
+                                resp.getStatusCode().value(), null);
+                    })
+                    .onStatus(status -> status.value() == 400, (req, resp) -> {
+                        boolean modelUnavailable = responseIndicatesModelUnavailable(resp.getBody());
+                        ProviderFailureCategory category = modelUnavailable
+                                ? ProviderFailureCategory.MODEL_NOT_FOUND_OR_UNAVAILABLE
+                                : ProviderFailureCategory.BAD_REQUEST;
+                        String message = modelUnavailable
+                                ? "Provider model is unavailable (HTTP 400)"
+                                : "Provider request rejected (HTTP 400)";
+                        log.debug("[{}] HTTP 400 {}", provider,
+                                modelUnavailable ? "model unavailable" : "bad request");
+                        throw new ProviderException(provider, message, category, 400, null);
+                    })
                     .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
                         log.debug("[{}] HTTP {} Server Error", provider, resp.getStatusCode());
                         throw new ProviderException(provider,
-                                "Server error " + resp.getStatusCode());
+                                "Provider upstream server error (HTTP " + resp.getStatusCode().value() + ")",
+                                ProviderFailureCategory.NETWORK_ERROR, resp.getStatusCode().value(), null);
+                    })
+                    .onStatus(HttpStatusCode::is4xxClientError, (req, resp) -> {
+                        log.debug("[{}] HTTP {} client error", provider, resp.getStatusCode());
+                        throw new ProviderException(provider,
+                                "Provider request rejected (HTTP " + resp.getStatusCode().value() + ")",
+                                ProviderFailureCategory.BAD_REQUEST, resp.getStatusCode().value(), null);
                     })
                     .body(String.class);
 
@@ -116,9 +153,14 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
         } catch (ProviderException e) {
             throw e;
         } catch (ResourceAccessException e) {
-            throw new ProviderException(provider, "Network/timeout error: " + e.getMessage(), e);
+            ProviderFailureCategory category = classifyResourceAccess(e);
+            String message = category == ProviderFailureCategory.TIMEOUT
+                    ? "Provider request timed out"
+                    : "Provider network request failed";
+            throw new ProviderException(provider, message, category, e);
         } catch (Exception e) {
-            throw new ProviderException(provider, "Unexpected error: " + e.getMessage(), e);
+            throw new ProviderException(provider, "Unexpected provider transport failure",
+                    ProviderFailureCategory.UNKNOWN, e);
         }
     }
 
@@ -130,14 +172,41 @@ public abstract class OpenAiCompatibleAdapter extends AbstractLlmAdapter {
             JsonNode root = mapper.readTree(responseBody);
             JsonNode choices = root.path("choices");
             if (choices.isArray() && !choices.isEmpty()) {
-                return choices.get(0).path("message").path("content").asText("");
+                String content = choices.get(0).path("message").path("content").asText("");
+                if (!content.isBlank()) {
+                    return content;
+                }
+                throw new ProviderException(provider, "Provider returned an empty response",
+                        ProviderFailureCategory.EMPTY_RESPONSE);
             }
-            throw new ProviderException(provider, "No choices in " + provider + " response");
+            throw new ProviderException(provider, "Provider returned no choices",
+                    ProviderFailureCategory.BAD_RESPONSE_SCHEMA);
         } catch (ProviderException e) {
             throw e;
         } catch (Exception e) {
-            throw new ProviderException(provider,
-                    "Failed to parse " + provider + " response: " + e.getMessage(), e);
+            throw new ProviderException(provider, "Provider returned an invalid response",
+                    ProviderFailureCategory.BAD_RESPONSE_SCHEMA, e);
+        }
+    }
+
+    protected ProviderFailureCategory classifyResourceAccess(ResourceAccessException error) {
+        String message = error.getMessage() == null ? "" : error.getMessage().toLowerCase(java.util.Locale.ROOT);
+        return message.contains("timed out") || message.contains("timeout")
+                ? ProviderFailureCategory.TIMEOUT
+                : ProviderFailureCategory.NETWORK_ERROR;
+    }
+
+    private boolean responseIndicatesModelUnavailable(InputStream body) {
+        if (body == null) {
+            return false;
+        }
+        try {
+            byte[] bytes = body.readNBytes(1024);
+            String text = new String(bytes, StandardCharsets.UTF_8).toLowerCase(java.util.Locale.ROOT);
+            return text.contains("model not found") || text.contains("model unavailable")
+                    || text.contains("model is not available") || text.contains("unknown model");
+        } catch (IOException ignored) {
+            return false;
         }
     }
 }

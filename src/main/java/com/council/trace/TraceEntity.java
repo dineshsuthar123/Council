@@ -51,6 +51,9 @@ public class TraceEntity {
     @Column(name = "model_agreement")
     private Double modelAgreement;
 
+    @Column(name = "run_diagnostics", columnDefinition = "TEXT")
+    private String runDiagnostics;
+
     @Column(name = "score_dimensions", columnDefinition = "TEXT")
     private String scoreDimensions;
 
@@ -119,6 +122,8 @@ public class TraceEntity {
     public void setWinnerConfidence(Double winnerConfidence) { this.winnerConfidence = winnerConfidence; }
     public Double getModelAgreement() { return modelAgreement; }
     public void setModelAgreement(Double modelAgreement) { this.modelAgreement = modelAgreement; }
+    public String getRunDiagnostics() { return runDiagnostics; }
+    public void setRunDiagnostics(String runDiagnostics) { this.runDiagnostics = runDiagnostics; }
     public String getScoreDimensions() { return scoreDimensions; }
     public void setScoreDimensions(String scoreDimensions) { this.scoreDimensions = scoreDimensions; }
     public String getScoreBreakdown() { return scoreBreakdown; }

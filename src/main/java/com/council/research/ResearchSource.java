@@ -24,7 +24,10 @@ public record ResearchSource(
         double recencyScore,
         InjectionRisk injectionRisk,
         boolean supportsCurrentFacts,
-        Map<String, Object> metadata
+        Map<String, Object> metadata,
+        double relevanceScore,
+        String relevanceReason,
+        String excludedReason
 ) {
     public ResearchSource(String id,
                           String title,
@@ -42,7 +45,31 @@ public record ResearchSource(
                 publishedAt == null || publishedAt.isBlank() ? 0.60 : 0.82,
                 InjectionRisk.LOW,
                 true,
-                Map.of());
+                Map.of(),
+                score,
+                "External source has not been task-scored.",
+                null);
+    }
+
+    public ResearchSource(String id,
+                          String title,
+                          String url,
+                          String domain,
+                          String snippet,
+                          String publishedAt,
+                          double score,
+                          SourceType sourceType,
+                          EvidenceOrigin origin,
+                          String providedAt,
+                          String updatedAt,
+                          double authorityScore,
+                          double recencyScore,
+                          InjectionRisk injectionRisk,
+                          boolean supportsCurrentFacts,
+                          Map<String, Object> metadata) {
+        this(id, title, url, domain, snippet, publishedAt, score, sourceType, origin, providedAt, updatedAt,
+                authorityScore, recencyScore, injectionRisk, supportsCurrentFacts, metadata, score,
+                "Source has not been task-scored.", null);
     }
 
     public ResearchSource {
@@ -61,6 +88,9 @@ public record ResearchSource(
         recencyScore = clamp(recencyScore);
         injectionRisk = injectionRisk == null ? InjectionRisk.LOW : injectionRisk;
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
+        relevanceScore = clamp(relevanceScore);
+        relevanceReason = blankToNull(relevanceReason);
+        excludedReason = blankToNull(excludedReason);
     }
 
     public boolean hasHighInjectionRisk() {

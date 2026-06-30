@@ -42,6 +42,7 @@ public class SecurityConfig {
             AntPathRequestMatcher.antMatcher("/api/v1/traces"),
             AntPathRequestMatcher.antMatcher("/api/v1/traces/**"),
             AntPathRequestMatcher.antMatcher("/api/v1/providers/status"),
+            AntPathRequestMatcher.antMatcher("/api/v1/providers/preflight"),
             AntPathRequestMatcher.antMatcher("/api/v1/providers/scorecards"),
             AntPathRequestMatcher.antMatcher("/api/v1/providers/*/reset-cooldown"),
             AntPathRequestMatcher.antMatcher("/api/v1/metrics"),

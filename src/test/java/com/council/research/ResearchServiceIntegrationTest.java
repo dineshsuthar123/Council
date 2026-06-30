@@ -69,4 +69,31 @@ class ResearchServiceIntegrationTest {
         assertFalse(queriesCaptor.getValue().isEmpty());
         assertTrue(queriesCaptor.getValue().getFirst().contains("latest"));
     }
+
+    @Test
+    void filtersLowRelevanceExternalResearchButKeepsPromptSources() {
+        ResearchSource genericTrend = new ResearchSource("S7", "AI trends weekly",
+                "https://youtube.example/ai-trends", "youtube.example",
+                "A generic future of AI video.", "2026-06-01", 0.91);
+        ResearchSource pricing = new ResearchSource("S8", "Provider A API pricing",
+                "https://docs.provider-a.example/pricing", "docs.provider-a.example",
+                "Official Provider A API pricing and rate-limit documentation.", "2026-06-01", 0.94,
+                SourceType.OFFICIAL_DOC, EvidenceOrigin.EXTERNAL_RESEARCH, null, "2026-06-01",
+                0.95, 0.90, InjectionRisk.LOW, true, java.util.Map.of());
+        when(researchClient.search(anyList(), anyInt())).thenReturn(List.of(genericTrend, pricing));
+
+        ResearchPack pack = researchService.buildEvidencePack("""
+                Compare Provider A and Provider B API pricing, rate limits, latency, and reliability for a migration.
+
+                Source 1:
+                Internal trace metrics show Provider A is currently more reliable.
+                """, TaskType.RESEARCH_REQUIRED);
+
+        assertEquals(2, pack.sources().size());
+        assertTrue(pack.sources().stream().anyMatch(ResearchSource::isInternalTrace));
+        assertTrue(pack.sources().stream().anyMatch(source -> source.title().contains("Provider A API pricing")));
+        assertEquals(1, pack.excludedSources().size());
+        assertTrue(pack.excludedSources().getFirst().title().contains("AI trends"));
+        assertTrue(pack.warnings().stream().anyMatch(warning -> warning.contains("low-relevance")));
+    }
 }

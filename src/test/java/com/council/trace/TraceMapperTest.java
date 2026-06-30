@@ -2,6 +2,7 @@ package com.council.trace;
 
 import com.council.api.dto.FinalResponse;
 import com.council.common.TraceStatus;
+import com.council.common.exception.ProviderFailureCategory;
 import com.council.judge.FinalScoreBreakdown;
 import com.council.judge.invariant.InvariantCriticResult;
 import com.council.judge.invariant.InvariantLibrary;
@@ -10,6 +11,12 @@ import com.council.model.CriticResult;
 import com.council.model.DraftResult;
 import com.council.model.JudgeRanking;
 import com.council.model.JudgeResult;
+import com.council.model.ProviderFailureDetails;
+import com.council.model.ProviderRunDiagnostics;
+import com.council.model.ProviderOutcome;
+import com.council.model.ProviderOutcomeStatus;
+import com.council.orchestrator.EarlyStopDecision;
+import com.council.judge.TaskType;
 import com.council.research.ResearchPack;
 import com.council.research.ResearchSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,7 +61,9 @@ class TraceMapperTest {
                         List.of("latest routing"),
                         List.of(new ResearchSource("S1", "Routing source", "https://example.com",
                                 "example.com", "snippet", "2026-01-01", 0.9))))
-                .withInvariants(sampleInvariantResult());
+                .withInvariants(sampleInvariantResult())
+                .withRunDiagnostics(new ProviderRunDiagnostics(2, 1, 0.5, "DEGRADED", 0.5,
+                        "Only 1 of 2 selected providers produced valid drafts."));
 
         mapper.populateEntity(entity, drafts, critic, judge, response, 1500);
 
@@ -67,6 +76,7 @@ class TraceMapperTest {
         assertEquals(0.84, entity.getAnswerQuality());
         assertEquals(0.55, entity.getWinnerConfidence());
         assertEquals(0.95, entity.getModelAgreement());
+        assertTrue(entity.getRunDiagnostics().contains("\"providerCoverage\":0.5"));
         assertTrue(entity.getScoreDimensions().contains("\"pseudocode\":0.42"));
         assertTrue(entity.getScoreBreakdown().contains("\"finalAnswerQuality\":0.84"));
         assertTrue(entity.getResearchContext().contains("\"id\":\"S1\""));
@@ -97,6 +107,7 @@ class TraceMapperTest {
         entity.setAnswerQuality(0.76);
         entity.setWinnerConfidence(0.55);
         entity.setModelAgreement(0.95);
+        entity.setRunDiagnostics("{\"attemptedProviders\":2,\"validDraftProviders\":2,\"providerCoverage\":1.0,\"runHealth\":\"HEALTHY\"}");
         entity.setScoreDimensions("{\"pseudocode\":0.42}");
         entity.setScoreBreakdown("{\"baseRubricScore\":0.84,\"finalAnswerQuality\":0.76}");
         entity.setResearchContext("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}");
@@ -111,6 +122,7 @@ class TraceMapperTest {
         assertEquals(0.76, resp.answerQuality());
         assertEquals(0.55, resp.winnerConfidence());
         assertEquals(0.95, resp.modelAgreement());
+        assertTrue(resp.runDiagnostics().contains("HEALTHY"));
         assertEquals("{\"pseudocode\":0.42}", resp.dimensions());
         assertEquals("{\"baseRubricScore\":0.84,\"finalAnswerQuality\":0.76}", resp.scoreBreakdown());
         assertEquals("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}", resp.researchContext());
@@ -130,6 +142,49 @@ class TraceMapperTest {
         Map<String, String> raw = mapper.extractRawResponses(drafts);
         assertEquals(1, raw.size());
         assertEquals("raw-g", raw.get("gemini"));
+    }
+
+    @Test
+    @DisplayName("failed draft diagnostics are redacted and persisted with the trace")
+    void populateEntity_persistsSafeProviderFailureDiagnostics() {
+        TraceEntity entity = new TraceEntity(UUID.randomUUID(), "query");
+        ProviderFailureDetails failure = new ProviderFailureDetails(
+                "blackbox-gpt55", "Blackbox GPT 5.5", "blackbox/gpt-5.5", "api.blackbox.ai",
+                ProviderFailureCategory.AUTH_FAILED, "Provider authentication failed (HTTP 401)", 401,
+                124, false, 1, "CLOSED", "2026-06-22T00:00:00Z");
+        List<DraftResult> drafts = List.of(DraftResult.failure("blackbox-gpt55", "blackbox/gpt-5.5",
+                "Provider authentication failed (HTTP 401)", 124, failure));
+        FinalResponse response = new FinalResponse("trace", "answer", "reason", List.of(),
+                List.of("blackbox-gpt55"), 0.80)
+                .withRunDiagnostics(ProviderRunDiagnostics.from(drafts));
+
+        mapper.populateEntity(entity, drafts, null, null, response, 124);
+
+        assertTrue(entity.getDraftResults().contains("AUTH_FAILED"));
+        assertTrue(entity.getDraftResults().contains("api.blackbox.ai"));
+        assertTrue(entity.getRunDiagnostics().contains("FAILED"));
+        assertFalse(entity.getDraftResults().toLowerCase().contains("authorization"));
+    }
+
+    @Test
+    @DisplayName("early-stop outcomes and decision persist as trace diagnostics")
+    void populateEntity_persistsEarlyStopOutcomeSemantics() {
+        TraceEntity entity = new TraceEntity(UUID.randomUUID(), "query");
+        List<DraftResult> drafts = List.of(
+                DraftResult.success("groq", "model", "answer", "summary", List.of(), List.of(), 0.95, 20, "raw"),
+                DraftResult.skipped("blackbox-gpt55", "gpt-5.5", ProviderOutcomeStatus.SKIPPED_EARLY_STOP,
+                        "Draft skipped: early stop after valid draft confidence 0.95 >= 0.94"));
+        EarlyStopDecision decision = new EarlyStopDecision(true, "Diversity threshold met", 0.94,
+                1, 1, TaskType.GENERAL_REASONING, List.of(), null);
+        FinalResponse response = new FinalResponse("trace", "answer", "reason", List.of("groq"), List.of(), 0.95)
+                .withRunDiagnostics(ProviderRunDiagnostics.from(drafts, decision))
+                .withProviderOutcomes(ProviderOutcome.fromDraftResults(drafts));
+
+        mapper.populateEntity(entity, drafts, null, null, response, 20);
+
+        assertTrue(entity.getDraftResults().contains("SKIPPED_EARLY_STOP"));
+        assertTrue(entity.getRunDiagnostics().contains("earlyStopDecision"));
+        assertTrue(entity.getRunDiagnostics().contains("selectedProviders"));
     }
 
     @Test
@@ -166,6 +221,7 @@ class TraceMapperTest {
         entity.setAnswerQuality(0.84);
         entity.setWinnerConfidence(0.55);
         entity.setModelAgreement(0.95);
+        entity.setRunDiagnostics("{\"attemptedProviders\":3,\"validDraftProviders\":2,\"providerCoverage\":0.6667,\"runHealth\":\"DEGRADED\"}");
         entity.setScoreDimensions("{\"pseudocode\":0.42,\"deletion_safety\":0.9}");
         entity.setScoreBreakdown("{\"invariantCap\":0.6,\"finalAnswerQuality\":0.55}");
         entity.setResearchContext("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}");
@@ -198,6 +254,7 @@ class TraceMapperTest {
         assertEquals(0.84, debug.answerQuality());
         assertEquals(0.55, debug.winnerConfidence());
         assertEquals(0.95, debug.modelAgreement());
+        assertTrue(debug.runDiagnostics().contains("DEGRADED"));
         assertEquals("{\"pseudocode\":0.42,\"deletion_safety\":0.9}", debug.dimensions());
         assertEquals("{\"invariantCap\":0.6,\"finalAnswerQuality\":0.55}", debug.scoreBreakdown());
         assertEquals("{\"required\":true,\"sources\":[{\"id\":\"S1\"}]}", debug.researchContext());

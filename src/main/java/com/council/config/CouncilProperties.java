@@ -46,8 +46,10 @@ public class CouncilProperties {
         private String baseUrl = "";
         private String model = "";
         private int timeoutSeconds = 60;
+        private Integer timeoutMs;
         private double reliability = 0.8;
         private int maxTokens = 4096;
+        private double temperature = 0.2;
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -59,10 +61,17 @@ public class CouncilProperties {
         public void setModel(String model) { this.model = model; }
         public int getTimeoutSeconds() { return timeoutSeconds; }
         public void setTimeoutSeconds(int timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
+        public Integer getTimeoutMs() { return timeoutMs; }
+        public void setTimeoutMs(Integer timeoutMs) { this.timeoutMs = timeoutMs; }
+        public int getEffectiveTimeoutMillis() {
+            return timeoutMs != null && timeoutMs > 0 ? timeoutMs : timeoutSeconds * 1000;
+        }
         public double getReliability() { return reliability; }
         public void setReliability(double reliability) { this.reliability = reliability; }
         public int getMaxTokens() { return maxTokens; }
         public void setMaxTokens(int maxTokens) { this.maxTokens = maxTokens; }
+        public double getTemperature() { return temperature; }
+        public void setTemperature(double temperature) { this.temperature = temperature; }
 
         /** A provider is usable only when enabled AND an API key is present. */
         public boolean isUsable() {

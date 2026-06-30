@@ -33,7 +33,7 @@ class ClaudeAdapterTest {
         properties.setProviders(Map.of("claude", config));
 
         RestClientFactory restClientFactory = mock(RestClientFactory.class);
-        when(restClientFactory.create(anyString(), anyInt(), anyMap()))
+        when(restClientFactory.createWithTimeoutMillis(anyString(), anyInt(), anyMap()))
                 .thenReturn(mock(RestClient.class));
 
         ClaudeAdapter adapter = new ClaudeAdapter(
@@ -47,9 +47,9 @@ class ClaudeAdapterTest {
         );
 
         ArgumentCaptor<Map<String, String>> headersCaptor = ArgumentCaptor.captor();
-        verify(restClientFactory).create(
+        verify(restClientFactory).createWithTimeoutMillis(
                 eq("https://api.blackbox.ai"),
-                eq(60),
+                eq(60_000),
                 headersCaptor.capture()
         );
 

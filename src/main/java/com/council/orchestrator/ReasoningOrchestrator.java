@@ -3,6 +3,7 @@ package com.council.orchestrator;
 import com.council.api.dto.FinalResponse;
 import com.council.common.CouncilConstants;
 import com.council.common.CouncilUtils;
+import com.council.common.exception.ProviderFailureCategory;
 import com.council.config.CouncilProperties;
 import com.council.critic.CriticEngine;
 import com.council.events.PipelineEventBroadcaster;
@@ -74,6 +75,7 @@ public class ReasoningOrchestrator {
     private final ResearchService researchService;
     private final ResearchPromptAugmenter researchPromptAugmenter;
     private final InvariantViolationCritic invariantViolationCritic;
+    private final EarlyStopPolicy earlyStopPolicy;
     private final CouncilProperties.OrchestratorConfig orchestratorConfig;
     private final Map<String, CouncilProperties.ProviderConfig> providerConfigs;
     private final long draftTimeoutSeconds;
@@ -114,6 +116,7 @@ public class ReasoningOrchestrator {
         this.researchService = researchService;
         this.researchPromptAugmenter = researchPromptAugmenter;
         this.invariantViolationCritic = new InvariantViolationCritic();
+        this.earlyStopPolicy = new EarlyStopPolicy();
         this.orchestratorConfig = properties.getOrchestrator();
         this.providerConfigs = properties.getProviders() == null ? Map.of() : Map.copyOf(properties.getProviders());
         this.draftTimeoutSeconds = positiveOrDefault(
@@ -217,14 +220,17 @@ public class ReasoningOrchestrator {
             emit(traceId, "DRAFT", "running", "Draft phase started", startTime,
                     Map.of("providerCount", providers.size()));
             DraftRequest draftRequest = DraftRequest.of(traceId, modelQuery);
-            List<DraftResult> allDrafts = runDraftPhase(providers, draftRequest, budget);
+            DraftPhaseResult initialDraftPhase = runDraftPhaseDetailed(providers, draftRequest, budget, researchPack);
+            List<DraftResult> allDrafts = initialDraftPhase.drafts();
             List<DraftResult> traceDrafts = new ArrayList<>(allDrafts);
             traceDraftsForFailure = traceDrafts;
+            ProviderRunDiagnostics initialRunDiagnostics =
+                    ProviderRunDiagnostics.from(allDrafts, initialDraftPhase.earlyStopDecision());
 
             List<DraftResult> successfulDrafts = allDrafts.stream()
                     .filter(DraftResult::isSuccess).toList();
             List<String> failedProviders = allDrafts.stream()
-                    .filter(d -> !d.isSuccess())
+                    .filter(DraftResult::isFailure)
                     .map(DraftResult::provider).toList();
 
             log.info("[orchestrator] Drafts: {} successful, {} failed",
@@ -232,12 +238,19 @@ public class ReasoningOrchestrator {
             emit(traceId, "DRAFT", "done", "Draft phase completed", startTime,
                     Map.of("successfulDrafts", successfulDrafts.size(),
                             "failedDrafts", failedProviders.size(),
-                            "failedProviders", failedProviders));
+                            "skippedDrafts", initialRunDiagnostics.skippedProviders(),
+                            "failedProviders", failedProviders,
+                            "earlyStopDecision", initialDraftPhase.earlyStopDecision()));
 
             if (successfulDrafts.isEmpty()) {
-                String msg = "All providers failed: " + failedProviders;
+                String msg = failedProviders.isEmpty()
+                        ? "No provider produced a valid draft. " + initialRunDiagnostics.degradedRunStatus()
+                        : "All providers failed: " + failedProviders;
                 log.error("[orchestrator] {}", msg);
-                FinalResponse response = withResearch(errorResponse(traceId, msg, failedProviders), researchPack);
+                FinalResponse response = withResearch(errorResponse(traceId, msg, failedProviders), researchPack)
+                        .withRunDiagnostics(initialRunDiagnostics)
+                        .withProviderFailures(ProviderFailureDetails.fromDraftResults(allDrafts))
+                        .withProviderOutcomes(ProviderOutcome.fromDraftResults(allDrafts));
                 persistTrace(traceId, userQuery, allDrafts, null, null, response, startTime);
                 emitFailure(traceId, "ERROR", msg, startTime, response);
                 return response;
@@ -264,12 +277,14 @@ public class ReasoningOrchestrator {
             DraftFilterResult filteredInitial = filterConstraintValidDrafts(
                     successfulDrafts, effectiveVerifierBatchResult);
             List<DraftResult> constraintValidDrafts = filteredInitial.validDrafts();
-            List<String> failedAndRejected = mergeProviderLists(failedProviders, filteredInitial.invalidProviders());
 
             if (constraintValidDrafts.isEmpty()) {
                 log.warn("[orchestrator] No valid drafts after verifier/constraint filtering");
                 FinalResponse failure = withResearch(
-                        constraintFailureResponse(traceId, failedAndRejected), researchPack);
+                        constraintFailureResponse(traceId, failedProviders), researchPack)
+                        .withRunDiagnostics(initialRunDiagnostics)
+                        .withProviderFailures(ProviderFailureDetails.fromDraftResults(allDrafts))
+                        .withProviderOutcomes(ProviderOutcome.fromDraftResults(allDrafts));
                 persistTrace(traceId, userQuery, allDrafts, criticResult, null, failure, startTime);
                 emitFailure(traceId, "ERROR", failure.message(), startTime, failure);
                 return failure;
@@ -290,7 +305,7 @@ public class ReasoningOrchestrator {
 
             // 5. Premium escalation (only when routing is enabled)
             List<DraftResult> finalDrafts = constraintValidDrafts;
-            List<String> finalFailed = failedAndRejected;
+            List<String> finalFailed = failedProviders;
             JudgeResult finalJudge = judgeResult;
             CriticResult finalCritic = criticResult;
             VerifierBatchResult finalVerifier = effectiveVerifierBatchResult;
@@ -308,13 +323,15 @@ public class ReasoningOrchestrator {
                     emit(traceId, "ESCALATE", "running", "Premium escalation triggered", startTime,
                             Map.of("providers", escalationProviders.stream().map(LlmAdapter::providerName).toList()));
 
-                    List<DraftResult> escalationDrafts = runDraftPhase(escalationProviders, draftRequest, budget);
+                    DraftPhaseResult escalationPhase =
+                            runDraftPhaseDetailed(escalationProviders, draftRequest, budget, researchPack);
+                    List<DraftResult> escalationDrafts = escalationPhase.drafts();
                     traceDrafts.addAll(escalationDrafts);
                     List<DraftResult> successfulEscalation = escalationDrafts.stream()
                             .filter(DraftResult::isSuccess).toList();
 
                     List<String> escalationFailed = escalationDrafts.stream()
-                            .filter(d -> !d.isSuccess())
+                            .filter(DraftResult::isFailure)
                             .map(DraftResult::provider).toList();
                     if (!escalationFailed.isEmpty()) {
                         finalFailed = mergeProviderLists(finalFailed, escalationFailed);
@@ -334,12 +351,15 @@ public class ReasoningOrchestrator {
 
                         DraftFilterResult filteredEscalated =
                                 filterConstraintValidDrafts(combined, effectiveEscalatedVerifier);
-                        finalFailed = mergeProviderLists(finalFailed, filteredEscalated.invalidProviders());
 
                         if (filteredEscalated.validDrafts().isEmpty()) {
                             log.warn("[orchestrator] No valid drafts after escalation verifier/constraint filtering");
                             FinalResponse failure = withResearch(
-                                    constraintFailureResponse(traceId, finalFailed), researchPack);
+                                    constraintFailureResponse(traceId, finalFailed), researchPack)
+                                    .withRunDiagnostics(ProviderRunDiagnostics.from(traceDrafts,
+                                            initialDraftPhase.earlyStopDecision()))
+                                    .withProviderFailures(ProviderFailureDetails.fromDraftResults(traceDrafts))
+                                    .withProviderOutcomes(ProviderOutcome.fromDraftResults(traceDrafts));
                             persistTrace(traceId, userQuery, traceDrafts, finalCritic, null, failure, startTime);
                             emitFailure(traceId, "ERROR", failure.message(), startTime, failure);
                             return failure;
@@ -421,7 +441,10 @@ public class ReasoningOrchestrator {
                     finalQuality.dimensions(),
                     finalQuality.scoreBreakdown())
                     .withResearch(researchPack)
-                    .withInvariants(finalQuality.invariants());
+                    .withInvariants(finalQuality.invariants())
+                    .withRunDiagnostics(ProviderRunDiagnostics.from(traceDrafts, initialDraftPhase.earlyStopDecision()))
+                    .withProviderFailures(ProviderFailureDetails.fromDraftResults(traceDrafts))
+                    .withProviderOutcomes(ProviderOutcome.fromDraftResults(traceDrafts));
 
             long totalLatency = System.currentTimeMillis() - startTime;
             metrics.recordTotalLatency(totalLatency);
@@ -486,10 +509,26 @@ public class ReasoningOrchestrator {
     }
 
     List<DraftResult> runDraftPhase(List<LlmAdapter> providers,
+                                     DraftRequest request,
+                                     ExecutionBudget budget) {
+        return runDraftPhaseDetailed(providers, request, budget, ResearchPack.notRequired()).drafts();
+    }
+
+    List<DraftResult> runDraftPhase(List<LlmAdapter> providers,
                                     DraftRequest request,
-                                    ExecutionBudget budget) {
+                                    TaskType taskType,
+                                    ResearchPack researchPack) {
+        return runDraftPhaseDetailed(providers, request,
+                executionBudget(taskType, System.nanoTime()), researchPack).drafts();
+    }
+
+    private DraftPhaseResult runDraftPhaseDetailed(List<LlmAdapter> providers,
+                                                   DraftRequest request,
+                                                   ExecutionBudget budget,
+                                                   ResearchPack researchPack) {
         if (providers == null || providers.isEmpty()) {
-            return List.of();
+            return new DraftPhaseResult(List.of(), EarlyStopDecision.continueWaiting(
+                    budget.taskType(), budget.earlyStopQualityThreshold(), 0, 0, List.of("no_selected_providers")));
         }
 
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -499,49 +538,69 @@ public class ReasoningOrchestrator {
             Map<Future<DraftResult>, LlmAdapter> pending = new LinkedHashMap<>();
             Map<String, DraftResult> resultsByProvider = new LinkedHashMap<>();
             Map<String, Long> providerDeadlines = new HashMap<>();
+            Deque<LlmAdapter> unsubmitted = new ArrayDeque<>(providers);
             long now = System.nanoTime();
             long phaseDeadlineNanos = Math.min(
                     budget.requestDeadlineNanos(),
                     now + TimeUnit.SECONDS.toNanos(budget.draftTimeoutSeconds()));
+            EarlyStopPolicy.Requirements requirements = earlyStopPolicy.requirements(
+                    budget.taskType(), request.userQuery(), researchPack, providers.size(),
+                    budget.earlyStopQualityThreshold());
+            EarlyStopDecision latestEarlyStop = EarlyStopDecision.continueWaiting(
+                    budget.taskType(), requirements.confidenceThreshold(),
+                    requirements.minValidDraftsBeforeEarlyStop(), 0, List.of("drafts_not_completed"));
+            boolean schedulingStopped = false;
 
-            for (LlmAdapter provider : providers) {
-                Future<DraftResult> future =
-                        completionService.submit(() -> executeDraftProvider(provider, request));
-                pending.put(future, provider);
-                long providerDeadline = now + TimeUnit.SECONDS.toNanos(providerDeadlineSeconds(provider, budget));
-                providerDeadlines.put(provider.providerName(), Math.min(providerDeadline, phaseDeadlineNanos));
-            }
+            submitProvidersUntil(pending, providerDeadlines, completionService, unsubmitted, request, budget,
+                    phaseDeadlineNanos, requirements.minValidDraftsBeforeEarlyStop());
 
-            while (!pending.isEmpty()) {
+            while (!pending.isEmpty() || !unsubmitted.isEmpty()) {
                 cancelExpiredDrafts(pending, resultsByProvider, providerDeadlines, budget);
-                if (pending.isEmpty()) {
-                    break;
-                }
 
                 now = System.nanoTime();
                 if (now >= phaseDeadlineNanos) {
                     cancelPendingDrafts(pending, resultsByProvider,
                             "Draft generation timed out before enough providers completed",
                             "draft_phase_deadline_exceeded", budget);
+                    skipUnsubmittedProviders(unsubmitted, resultsByProvider,
+                            ProviderOutcomeStatus.SKIPPED_TIMEOUT_BUDGET,
+                            "Draft skipped: request timeout budget exhausted");
                     break;
                 }
 
-                Future<DraftResult> completed = completionService.poll(
-                        nextDraftPollMillis(pending, providerDeadlines, phaseDeadlineNanos),
-                        TimeUnit.MILLISECONDS);
-                if (completed != null) {
-                    LlmAdapter provider = pending.remove(completed);
-                    if (provider != null) {
-                        resultsByProvider.put(provider.providerName(), resolveDraftFuture(provider, completed));
+                if (!pending.isEmpty()) {
+                    Future<DraftResult> completed = completionService.poll(
+                            nextDraftPollMillis(pending, providerDeadlines, phaseDeadlineNanos),
+                            TimeUnit.MILLISECONDS);
+                    if (completed != null) {
+                        LlmAdapter provider = pending.remove(completed);
+                        if (provider != null) {
+                            resultsByProvider.put(provider.providerName(), resolveDraftFuture(provider, completed));
+                        }
                     }
                 }
 
-                EarlyStopDecision earlyStop = earlyStopDecision(resultsByProvider.values(), pending.values(), budget);
-                if (earlyStop.stop()) {
-                    log.info("[orchestrator] Draft early-stop: {}", earlyStop.reason());
-                    cancelPendingDrafts(pending, resultsByProvider, earlyStop.reason(),
-                            earlyStop.metricReason(), budget);
-                    break;
+                latestEarlyStop = earlyStopPolicy.evaluate(
+                        budget.taskType(), request.userQuery(), researchPack, providers.size(),
+                        resultsByProvider.values(), budget.earlyStopEnabled(), budget.earlyStopQualityThreshold(),
+                        budget.earlyStopMinImprovement(), expectedRemainingCeiling(unsubmitted),
+                        budget.remainingMillis(), TimeUnit.SECONDS.toMillis(budget.requestTimeoutSeconds()));
+                if (latestEarlyStop.allowed() && !schedulingStopped) {
+                    log.info("[orchestrator] Draft early-stop: {}", latestEarlyStop.reason());
+                    schedulingStopped = true;
+                    skipUnsubmittedProviders(unsubmitted, resultsByProvider, ProviderOutcomeStatus.SKIPPED_EARLY_STOP,
+                            "Draft skipped: early stop after valid draft confidence "
+                                    + formatScore(bestDraftConfidence(resultsByProvider.values()))
+                                    + " >= " + formatScore(latestEarlyStop.threshold()));
+                }
+
+                if (!schedulingStopped && !unsubmitted.isEmpty()) {
+                    int validDrafts = (int) resultsByProvider.values().stream().filter(DraftResult::isSuccess).count();
+                    int targetPending = validDrafts >= requirements.minValidDraftsBeforeEarlyStop()
+                            ? pending.size() + unsubmitted.size()
+                            : Math.max(1, requirements.minValidDraftsBeforeEarlyStop() - validDrafts);
+                    submitProvidersUntil(pending, providerDeadlines, completionService, unsubmitted, request, budget,
+                            phaseDeadlineNanos, targetPending);
                 }
             }
 
@@ -552,16 +611,50 @@ public class ReasoningOrchestrator {
                     ordered.add(result);
                 }
             }
-            return List.copyOf(ordered);
+            return new DraftPhaseResult(List.copyOf(ordered), latestEarlyStop);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("[orchestrator] Draft phase interrupted");
-            return providers.stream()
+            List<DraftResult> interrupted = providers.stream()
                     .map(provider -> DraftResult.failure(provider.providerName(), provider.modelName(),
-                            "Draft generation interrupted", 0))
+                            "Draft generation interrupted", 0,
+                            ProviderFailureDetails.local(provider.providerName(), provider.modelName(),
+                                    ProviderFailureCategory.UNKNOWN, "Draft generation interrupted", 0)))
                     .toList();
+            return new DraftPhaseResult(interrupted, EarlyStopDecision.continueWaiting(
+                    budget.taskType(), budget.earlyStopQualityThreshold(), providers.size(), 0,
+                    List.of("draft_phase_interrupted")));
         } finally {
             executor.shutdownNow();
+        }
+    }
+
+    private void submitProvidersUntil(Map<Future<DraftResult>, LlmAdapter> pending,
+                                      Map<String, Long> providerDeadlines,
+                                      ExecutorCompletionService<DraftResult> completionService,
+                                      Deque<LlmAdapter> unsubmitted,
+                                      DraftRequest request,
+                                      ExecutionBudget budget,
+                                      long phaseDeadlineNanos,
+                                      int targetPending) {
+        while (pending.size() < targetPending && !unsubmitted.isEmpty()) {
+            LlmAdapter provider = unsubmitted.removeFirst();
+            Future<DraftResult> future = completionService.submit(() -> executeDraftProvider(provider, request));
+            pending.put(future, provider);
+            long providerDeadline = System.nanoTime()
+                    + TimeUnit.SECONDS.toNanos(providerDeadlineSeconds(provider, budget));
+            providerDeadlines.put(provider.providerName(), Math.min(providerDeadline, phaseDeadlineNanos));
+        }
+    }
+
+    private void skipUnsubmittedProviders(Deque<LlmAdapter> unsubmitted,
+                                          Map<String, DraftResult> resultsByProvider,
+                                          ProviderOutcomeStatus outcomeStatus,
+                                          String reason) {
+        while (!unsubmitted.isEmpty()) {
+            LlmAdapter provider = unsubmitted.removeFirst();
+            resultsByProvider.put(provider.providerName(), DraftResult.skipped(
+                    provider.providerName(), provider.modelName(), outcomeStatus, reason));
         }
     }
 
@@ -583,7 +676,11 @@ public class ReasoningOrchestrator {
                         provider.providerName(),
                         provider.modelName(),
                         "Draft generation timed out after per-provider deadline",
-                        TimeUnit.SECONDS.toMillis(providerDeadlineSeconds(provider, budget))));
+                        TimeUnit.SECONDS.toMillis(providerDeadlineSeconds(provider, budget)),
+                        ProviderFailureDetails.local(provider.providerName(), provider.modelName(),
+                                ProviderFailureCategory.TIMEOUT,
+                                "Draft generation timed out after per-provider deadline",
+                                TimeUnit.SECONDS.toMillis(providerDeadlineSeconds(provider, budget)))));
                 metrics.recordBudgetStop("provider_deadline_exceeded", budget.taskType().name());
                 metrics.recordDegradedMode("provider_deadline_exceeded");
             }
@@ -606,7 +703,11 @@ public class ReasoningOrchestrator {
             future.cancel(true);
             iterator.remove();
             resultsByProvider.putIfAbsent(provider.providerName(), DraftResult.failure(
-                    provider.providerName(), provider.modelName(), reason, 0));
+                    provider.providerName(), provider.modelName(), reason, 0,
+                    ProviderFailureDetails.local(provider.providerName(), provider.modelName(),
+                            metricReason.contains("deadline") ? ProviderFailureCategory.TIMEOUT
+                                    : ProviderFailureCategory.UNKNOWN,
+                            reason, 0)));
             metrics.recordDegradedMode(metricReason);
         }
     }
@@ -625,40 +726,19 @@ public class ReasoningOrchestrator {
         return Math.max(1L, Math.min(250L, remaining));
     }
 
-    private EarlyStopDecision earlyStopDecision(Collection<DraftResult> results,
-                                                Collection<LlmAdapter> pendingProviders,
-                                                ExecutionBudget budget) {
-        if (!budget.earlyStopEnabled() || pendingProviders.isEmpty()) {
-            return EarlyStopDecision.continueWaiting();
-        }
-
-        Optional<DraftResult> best = results.stream()
-                .filter(DraftResult::isSuccess)
-                .max(Comparator.comparingDouble(DraftResult::confidence));
-        if (best.isEmpty()) {
-            return EarlyStopDecision.continueWaiting();
-        }
-
-        double bestConfidence = best.get().confidence();
-        if (bestConfidence >= budget.earlyStopQualityThreshold()) {
-            return EarlyStopDecision.stop(
-                    "Draft skipped: early stop after sufficient draft confidence "
-                            + formatScore(bestConfidence)
-                            + " >= " + formatScore(budget.earlyStopQualityThreshold()),
-                    "early_stop_quality_sufficient");
-        }
-
-        double bestRemainingCeiling = pendingProviders.stream()
+    private double expectedRemainingCeiling(Collection<LlmAdapter> pendingProviders) {
+        return pendingProviders.stream()
                 .mapToDouble(provider -> expectedProviderCeiling(provider.providerName()))
                 .max()
                 .orElse(0.0);
-        if (bestConfidence + budget.earlyStopMinImprovement() >= bestRemainingCeiling) {
-            return EarlyStopDecision.stop(
-                    "Draft skipped: remaining providers were unlikely to materially improve the current best draft",
-                    "early_stop_no_material_improvement");
-        }
+    }
 
-        return EarlyStopDecision.continueWaiting();
+    private double bestDraftConfidence(Collection<DraftResult> results) {
+        return results.stream()
+                .filter(DraftResult::isSuccess)
+                .mapToDouble(DraftResult::confidence)
+                .max()
+                .orElse(0.0);
     }
 
     private long providerDeadlineSeconds(LlmAdapter provider, ExecutionBudget budget) {
@@ -683,7 +763,8 @@ public class ReasoningOrchestrator {
             MDC.remove(CouncilConstants.MDC_TRACE_ID);
             log.warn("[orchestrator] Provider '{}' at max concurrency, skipping", name);
             metrics.recordConcurrencyRejection(name);
-            return DraftResult.failure(name, provider.modelName(), "Max concurrency reached", 0);
+            return DraftResult.skipped(name, provider.modelName(), ProviderOutcomeStatus.SKIPPED_BUDGET_LIMIT,
+                    "Draft skipped: local concurrency limit reached before provider invocation");
         }
         try {
             return provider.generateDraft(request);
@@ -700,7 +781,9 @@ public class ReasoningOrchestrator {
         if (future.isCancelled()) {
             log.warn("[orchestrator] Draft provider '{}' timed out after {}s",
                     providerName, draftTimeoutSeconds);
-            return DraftResult.failure(providerName, modelName, "Draft generation timed out", 0);
+            return DraftResult.failure(providerName, modelName, "Draft generation timed out", 0,
+                    ProviderFailureDetails.local(providerName, modelName, ProviderFailureCategory.TIMEOUT,
+                            "Draft generation timed out", 0));
         }
 
         try {
@@ -708,12 +791,16 @@ public class ReasoningOrchestrator {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("[orchestrator] Draft provider '{}' interrupted", providerName);
-            return DraftResult.failure(providerName, modelName, "Draft generation interrupted", 0);
+            return DraftResult.failure(providerName, modelName, "Draft generation interrupted", 0,
+                    ProviderFailureDetails.local(providerName, modelName, ProviderFailureCategory.UNKNOWN,
+                            "Draft generation interrupted", 0));
         } catch (ExecutionException e) {
             String message = rootMessage(e);
             log.warn("[orchestrator] Draft provider '{}' failed: {}", providerName, message);
             return DraftResult.failure(providerName, modelName,
-                    "Draft generation failed: " + message, 0);
+                    "Draft generation failed: " + message, 0,
+                    ProviderFailureDetails.local(providerName, modelName, ProviderFailureCategory.UNKNOWN,
+                            "Draft generation failed", 0));
         }
     }
 
@@ -1136,17 +1223,7 @@ public class ReasoningOrchestrator {
         }
     }
 
-    private record EarlyStopDecision(boolean stop,
-                                     String reason,
-                                     String metricReason) {
-        static EarlyStopDecision continueWaiting() {
-            return new EarlyStopDecision(false, "", "");
-        }
-
-        static EarlyStopDecision stop(String reason, String metricReason) {
-            return new EarlyStopDecision(true, reason, metricReason);
-        }
-    }
+    private record DraftPhaseResult(List<DraftResult> drafts, EarlyStopDecision earlyStopDecision) {}
 
     private record CalibratedFinalQuality(double score,
                                            Map<String, Double> dimensions,

@@ -76,8 +76,9 @@ class ResearchServicePromptEvidenceTest {
         properties.getResearch().setEnabled(true);
         properties.getResearch().setApiKey("test-key");
         when(client.search(anyList(), anyInt())).thenReturn(List.of(
-                new ResearchSource("S1", "External extra", "https://external.example/doc",
-                        "external.example", "External current evidence.", "2026-06-01", 0.90)));
+                new ResearchSource("S1", "Provider A API pricing", "https://docs.provider-a.example/pricing",
+                        "docs.provider-a.example", "Current Provider A API pricing and latency documentation.",
+                        "2026-06-01", 0.90)));
 
         ResearchService service = new ResearchService(properties,
                 new ResearchNeedDetector(),

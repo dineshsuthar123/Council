@@ -360,6 +360,8 @@ function renderAnswer(response) {
       ${scoreCard("Winner confidence", winnerConfidence, winnerConfidenceHelper(validDraftCount))}
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
+    ${runHealthPanel(response.runDiagnostics)}
+    ${providerOutcomePanel(response.providerOutcomes || response.providerFailures)}
     ${dimensionGrid(response.dimensions)}
     ${invariantPanel(response.invariants)}
     ${researchPanel(response.research)}
@@ -434,7 +436,12 @@ function renderProviderSkeleton() {
 }
 
 function renderProviderRow(provider, scorecard) {
-  const statusClass = provider.enabled && provider.availableForRouting !== false && !provider.coolingDown ? "up" : provider.coolingDown ? "degraded" : "down";
+  const warnings = Array.isArray(provider.configWarnings) ? provider.configWarnings : [];
+  const preflightStatus = provider.preflightStatus || "NOT_RUN";
+  const preflightFailed = preflightStatus === "FAILED";
+  const statusClass = provider.enabled && provider.availableForRouting !== false && !provider.coolingDown && !preflightFailed
+    ? (warnings.length ? "degraded" : "up")
+    : provider.coolingDown || warnings.length ? "degraded" : "down";
   const roles = Array.isArray(provider.roles) && provider.roles.length
     ? provider.roles.map((role) => `<span class="role-tag">${escapeHtml(role)}</span>`).join("")
     : `<span class="role-tag">GENERAL</span>`;
@@ -446,12 +453,19 @@ function renderProviderRow(provider, scorecard) {
   const confidence = scorecard
     ? `avg ${scorecard.avgLatencyMs} ms | conf ${Math.round(scorecard.avgConfidence * 100)}%`
     : `${Math.round((provider.recentFailureRate || 0) * 100)}% recent failure | ${total} calls`;
+  const preflight = provider.preflightStatus
+    ? `preflight ${humanize(provider.preflightStatus)}${provider.preflightFailureCategory ? ` (${humanize(provider.preflightFailureCategory)})` : ""}`
+    : "preflight not available";
+  const timeout = provider.timeoutMsConfigured ? `timeout ${provider.timeoutMsConfigured} ms` : "";
+  const warningLine = warnings.length ? `<div class="provider-warning">${escapeHtml(warnings.join(" "))}</div>` : "";
 
   return `
     <div class="provider-row">
       <div>
         <div class="provider-name"><span class="status-dot ${statusClass}"></span>${escapeHtml(provider.provider)}</div>
         <div class="provider-model">${escapeHtml(provider.model || "model unavailable")}</div>
+        <div class="provider-model">${escapeHtml([preflight, timeout, provider.timeoutSource].filter(Boolean).join(" - "))}</div>
+        ${warningLine}
       </div>
       <div class="provider-roles">${roles}</div>
       <div class="provider-metric">
@@ -574,6 +588,7 @@ function renderTraceDebug(debug) {
       ${scoreCard("Winner confidence", winnerConfidence, winnerConfidenceHelper(validDraftCount))}
       ${agreementScoreCard(modelAgreement, validDraftCount)}
     </div>
+    ${runHealthPanel(debug.runDiagnostics)}
     ${dimensionGrid(debug.dimensions)}
     ${scoreBreakdownPanel(debug.scoreBreakdown)}
     ${invariantPanel(debug.invariantFindings)}
@@ -889,6 +904,15 @@ function dimensionGrid(dimensions) {
     ["unsupported_claim_penalty", "Supported claims"],
     ["conflict_handling", "Conflict handling"],
     ["answer_completeness", "Completeness"],
+    ["claim_evidence_consistency", "Claim evidence"],
+    ["source_boundary_integrity", "Source boundary"],
+    ["final_contract_compliance", "Final contract"],
+    ["research_pipeline_concreteness", "Research pseudocode"],
+    ["enumerated_section_coverage", "Section coverage"],
+    ["final_recommendation_sentence_count", "Final rec sentences"],
+    ["final_recommendation_required_min", "Final rec min"],
+    ["final_recommendation_required_max", "Final rec max"],
+    ["final_recommendation_contract_satisfied", "Final rec contract"],
     ["invariant_payment_transfer", "Payment invariants"],
     ["invariant_url_shortener", "URL invariants"],
     ["invariant_research_evidence", "Research invariants"],
@@ -904,6 +928,18 @@ function dimensionGrid(dimensions) {
   const rows = [...order, ...extraRows]
     .filter(([key]) => dimensions[key] != null)
     .map(([key, label]) => {
+      if (isDimensionMetadata(key)) {
+        const raw = Number(dimensions[key]);
+        const display = Number.isFinite(raw) ? Math.round(raw).toString() : String(dimensions[key]);
+        return `
+        <div class="dimension-row meta">
+          <div class="dimension-label">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(display)}</strong>
+          </div>
+        </div>
+      `;
+      }
       const value = scoreValue(dimensions[key]);
       const pct = Math.round(value * 100);
       const tone = pct < 60 ? " low" : pct < 80 ? " medium" : "";
@@ -1029,6 +1065,7 @@ function researchPanel(pack) {
   const sources = Array.isArray(pack.sources) ? pack.sources : [];
   const queries = Array.isArray(pack.queries) ? pack.queries : [];
   const warnings = Array.isArray(pack.warnings) ? pack.warnings : [];
+  const excludedSources = Array.isArray(pack.excludedSources) ? pack.excludedSources : [];
   const origin = pack.originSummary || (pack.hasPromptProvidedSources ? "Prompt-provided evidence" : "External research");
   const statusClass = sources.length ? "up" : "degraded";
   const statusText = sources.length ? `${sources.length} sources attached - ${origin}` : "Research unavailable";
@@ -1058,6 +1095,12 @@ function researchPanel(pack) {
       ? [`${pack.researchUnavailableReason}. Prompt-provided sources were parsed and used.`]
       : [])
   ];
+  const excludedRows = excludedSources.map((source) => `
+    <li>
+      <strong>${escapeHtml(source.id || "S?")} - ${escapeHtml(source.title || source.url || "Untitled source")}</strong>
+      <span>${Math.round(scoreValue(source.relevanceScore) * 100)}% relevance - ${escapeHtml(source.excludedReason || source.relevanceReason || "Below relevance threshold")}</span>
+    </li>
+  `).join("");
 
   return `
     <div class="research-panel" aria-label="Research evidence pack">
@@ -1070,6 +1113,7 @@ function researchPanel(pack) {
       <p class="research-reason">${escapeHtml(pack.reason || "External research was requested.")}</p>
       ${queries.length ? `<div class="query-chips">${queries.map((query) => `<span>${escapeHtml(query)}</span>`).join("")}</div>` : ""}
       ${sources.length ? `<div class="source-list">${sourceRows}</div>` : `<div class="empty-inline">${escapeHtml(pack.errorMessage || "No source evidence was available for this run.")}</div>`}
+      ${excludedSources.length ? `<details class="excluded-sources"><summary>${excludedSources.length} low-relevance external sources excluded from synthesis</summary><ul>${excludedRows}</ul></details>` : ""}
     </div>
   `;
 }
@@ -1085,32 +1129,129 @@ function providerOutcomePanel(draftResults) {
     return "";
   }
 
+  const groups = [
+    { key: "used", label: "Used / valid drafts", statuses: ["SUCCEEDED"] },
+    { key: "failed", label: "Failed attempts", statuses: ["FAILED"] },
+    { key: "skipped", label: "Skipped", match: (status) => status.startsWith("SKIPPED_") },
+    { key: "unavailable", label: "Unavailable / disabled", match: (status) => status.startsWith("UNAVAILABLE_") },
+  ];
+
   const rows = drafts.map((draft) => {
-    const status = String(draft.status || (draft.errorMessage ? "FAILURE" : "SUCCESS")).toUpperCase();
-    const ok = status === "SUCCESS";
+    const diagnostics = draft.failureDetails || draft;
+    const rawStatus = String(draft.outcomeStatus || draft.status
+      || (diagnostics.failureCategory || draft.errorMessage ? "FAILED" : "SUCCEEDED")).toUpperCase();
+    const status = rawStatus === "SUCCESS" ? "SUCCEEDED" : rawStatus === "FAILURE" ? "FAILED" : rawStatus;
+    const ok = status === "SUCCEEDED";
+    const skipped = status.startsWith("SKIPPED_");
+    const unavailable = status.startsWith("UNAVAILABLE_");
+    const attempted = typeof draft.attempted === "boolean" ? draft.attempted : !(skipped || unavailable);
+    const provider = diagnostics.displayName || diagnostics.providerId || draft.provider || "unknown";
+    const category = skipped ? "Skipped" : unavailable ? "Unavailable"
+      : diagnostics.failureCategory ? humanize(diagnostics.failureCategory) : "Unknown failure";
     const reason = ok
       ? (draft.summary || "Draft succeeded.")
-      : (draft.errorMessage || draft.summary || "Provider failed without a captured reason.");
-    return `
+      : (draft.skipReason || diagnostics.safeMessage || draft.errorMessage || draft.summary
+        || "Provider outcome did not include a safe reason.");
+    const retry = !attempted
+      ? "not attempted"
+      : diagnostics.retryAttempted
+      ? `retried (${diagnostics.attemptCount || 2} attempts)`
+      : `single attempt (${diagnostics.attemptCount || 1})`;
+    const circuit = diagnostics.circuitBreakerState && diagnostics.circuitBreakerState !== "UNKNOWN"
+      ? `circuit ${diagnostics.circuitBreakerState.toLowerCase()}`
+      : "";
+    const timeout = diagnostics.timeoutMsConfigured
+      ? `timeout ${diagnostics.timeoutMsConfigured} ms${diagnostics.timeoutSource ? ` ${humanize(diagnostics.timeoutSource)}` : ""}`
+      : "";
+    const requestShape = [
+      diagnostics.promptTokenEstimate ? `~${diagnostics.promptTokenEstimate} prompt tokens` : "",
+      diagnostics.requestSizeBytes ? `${diagnostics.requestSizeBytes} bytes` : ""
+    ].filter(Boolean).join(" - ");
+    const group = ok ? "used" : skipped ? "skipped" : unavailable ? "unavailable" : "failed";
+    return { group, status, markup: `
       <div class="provider-outcome-row">
         <div>
-          <strong><span class="status-dot ${ok ? "up" : "down"}"></span>${escapeHtml(draft.provider || "unknown")}</strong>
-          <small>${escapeHtml(draft.model || "model --")} - ${draft.latencyMs ?? "--"} ms</small>
+          <strong><span class="status-dot ${ok ? "up" : skipped ? "neutral" : "down"}"></span>${escapeHtml(provider)}</strong>
+          <small>${escapeHtml(diagnostics.providerId || draft.provider || "unknown")} - ${escapeHtml(draft.model || diagnostics.model || "model --")} - ${diagnostics.latencyMs ?? draft.latencyMs ?? "--"} ms</small>
         </div>
-        <p class="${ok ? "" : "failure-reason"}">${escapeHtml(reason)}</p>
+        <div>
+          ${ok ? "" : `<span class="failure-category">${escapeHtml(category)}</span>`}
+          <p class="${ok ? "" : "failure-reason"}">${escapeHtml(reason)}</p>
+          ${ok ? "" : `<small class="failure-meta">${escapeHtml([humanize(status), retry, circuit, diagnostics.httpStatus ? `HTTP ${diagnostics.httpStatus}` : "", timeout, requestShape].filter(Boolean).join(" - "))}</small>`}
+        </div>
       </div>
-    `;
+    ` };
+  });
+
+  const groupedRows = groups.map((group) => {
+    const matching = rows.filter((row) => group.statuses
+      ? group.statuses.includes(row.status)
+      : group.match(row.status));
+    if (!matching.length) return "";
+    return `<section class="provider-outcome-group provider-outcome-${group.key}">
+      <h4>${escapeHtml(group.label)} <span>${matching.length}</span></h4>
+      <div class="provider-outcome-grid">${matching.map((row) => row.markup).join("")}</div>
+    </section>`;
   }).join("");
 
   return `
     <div class="provider-outcome-panel" aria-label="Provider outcomes">
       <div class="dimension-heading">
         <span>Provider outcomes</span>
-        <small>Failure reasons and latencies</small>
+        <small>Used, failed, skipped, and unavailable providers</small>
       </div>
-      <div class="provider-outcome-grid">${rows}</div>
+      ${groupedRows}
     </div>
   `;
+}
+
+function humanize(value) {
+  return String(value || "Unknown")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function runHealthPanel(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== "object") {
+    return "";
+  }
+  const coverage = scoreValue(diagnostics.providerCoverage);
+  const health = String(diagnostics.runHealth || "UNKNOWN").toUpperCase();
+  const healthy = health === "HEALTHY";
+  const selected = Number(diagnostics.selectedProviders || diagnostics.attemptedProviders || 0);
+  const attempted = Number(diagnostics.attemptedProviders || 0);
+  const valid = Number(diagnostics.validDraftProviders || 0);
+  const failed = Number(diagnostics.failedAttempts || 0);
+  const skipped = Number(diagnostics.skippedProviders || 0);
+  const unavailable = Number(diagnostics.unavailableProviders || 0);
+  const attemptCoverage = scoreValue(diagnostics.attemptCoverage ?? (selected ? attempted / selected : 0));
+  const reason = diagnostics.degradedRunStatus || "All selected providers returned valid drafts.";
+  return `
+    <div class="run-health-panel ${healthy ? "healthy" : "degraded"}" aria-label="Provider run health">
+      <div>
+        <span class="status-dot ${healthy ? "up" : "down"}"></span>
+        <strong>Run health: ${escapeHtml(humanize(health))}</strong>
+        <p>${escapeHtml(reason)}</p>
+      </div>
+      <div class="run-health-metrics">
+        <span>Provider coverage <strong>${Math.round(coverage * 1000) / 10}%</strong></span>
+        <span>Attempt coverage <strong>${Math.round(attemptCoverage * 1000) / 10}%</strong></span>
+        <span>Selected providers <strong>${selected}</strong></span>
+        <span>Attempted / valid <strong>${attempted}/${valid}</strong></span>
+        <span>Failed / skipped / unavailable <strong>${failed}/${skipped}/${unavailable}</strong></span>
+        <span>Run confidence <strong>${Math.round(scoreValue(diagnostics.runConfidence) * 100)}%</strong></span>
+      </div>
+    </div>
+  `;
+}
+
+function isDimensionMetadata(key) {
+  return [
+    "final_recommendation_sentence_count",
+    "final_recommendation_required_min",
+    "final_recommendation_required_max"
+  ].includes(key);
 }
 
 function scoreValue(value) {

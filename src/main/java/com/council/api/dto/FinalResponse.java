@@ -2,6 +2,9 @@ package com.council.api.dto;
 
 import com.council.judge.FinalScoreBreakdown;
 import com.council.judge.invariant.InvariantCriticResult;
+import com.council.model.ProviderRunDiagnostics;
+import com.council.model.ProviderFailureDetails;
+import com.council.model.ProviderOutcome;
 import com.council.research.ResearchPack;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
@@ -27,7 +30,10 @@ public record FinalResponse(
         Map<String, Double> dimensions,
         FinalScoreBreakdown scoreBreakdown,
         ResearchPack research,
-        InvariantCriticResult invariants
+        InvariantCriticResult invariants,
+        ProviderRunDiagnostics runDiagnostics,
+        List<ProviderFailureDetails> providerFailures,
+        List<ProviderOutcome> providerOutcomes
 ) {
     public FinalResponse(String traceId,
                          String finalAnswer,
@@ -36,7 +42,7 @@ public record FinalResponse(
                          List<String> failedProviders,
                          double confidence) {
         this(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
-                confidence, null, null, confidence, confidence, null, null, null, null, null);
+                confidence, null, null, confidence, confidence, null, null, null, null, null, null, null, null);
     }
 
     public FinalResponse(String traceId,
@@ -48,7 +54,7 @@ public record FinalResponse(
                          String error,
                          String message) {
         this(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
-                confidence, error, message, confidence, confidence, null, null, null, null, null);
+                confidence, error, message, confidence, confidence, null, null, null, null, null, null, null, null);
     }
 
     public FinalResponse withScoreBreakdown(double answerQuality,
@@ -71,19 +77,41 @@ public record FinalResponse(
                                             FinalScoreBreakdown scoreBreakdown) {
         return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
                 answerQuality, error, message, answerQuality, winnerConfidence, modelAgreement,
-                dimensions, scoreBreakdown, research, invariants);
+                dimensions, scoreBreakdown, research, invariants, runDiagnostics, providerFailures, providerOutcomes);
     }
 
     public FinalResponse withResearch(ResearchPack research) {
         return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
                 confidence, error, message, answerQuality, winnerConfidence, modelAgreement,
-                dimensions, scoreBreakdown, research, invariants);
+                dimensions, scoreBreakdown, research, invariants, runDiagnostics, providerFailures, providerOutcomes);
     }
 
     public FinalResponse withInvariants(InvariantCriticResult invariants) {
         return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
                 confidence, error, message, answerQuality, winnerConfidence, modelAgreement,
-                dimensions, scoreBreakdown, research, invariants);
+                dimensions, scoreBreakdown, research, invariants, runDiagnostics, providerFailures, providerOutcomes);
+    }
+
+    public FinalResponse withRunDiagnostics(ProviderRunDiagnostics runDiagnostics) {
+        return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
+                confidence, error, message, answerQuality, winnerConfidence, modelAgreement,
+                dimensions, scoreBreakdown, research, invariants, runDiagnostics, providerFailures, providerOutcomes);
+    }
+
+    public FinalResponse withProviderFailures(List<ProviderFailureDetails> providerFailures) {
+        List<ProviderFailureDetails> safeFailures = providerFailures == null || providerFailures.isEmpty()
+                ? null : List.copyOf(providerFailures);
+        return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
+                confidence, error, message, answerQuality, winnerConfidence, modelAgreement,
+                dimensions, scoreBreakdown, research, invariants, runDiagnostics, safeFailures, providerOutcomes);
+    }
+
+    public FinalResponse withProviderOutcomes(List<ProviderOutcome> providerOutcomes) {
+        List<ProviderOutcome> safeOutcomes = providerOutcomes == null || providerOutcomes.isEmpty()
+                ? null : List.copyOf(providerOutcomes);
+        return new FinalResponse(traceId, finalAnswer, judgeReason, usedProviders, failedProviders,
+                confidence, error, message, answerQuality, winnerConfidence, modelAgreement,
+                dimensions, scoreBreakdown, research, invariants, runDiagnostics, providerFailures, safeOutcomes);
     }
 }
 

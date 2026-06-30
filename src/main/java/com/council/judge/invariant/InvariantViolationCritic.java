@@ -405,7 +405,20 @@ public class InvariantViolationCritic {
         boolean blogCited = pack.sources().stream()
                 .anyMatch(source -> source.sourceType() == SourceType.BLOG
                         && citations.contains(source.id()));
-        return officialAvailable && !officialCited && (blogCited || containsAny(text, "blog", "old blog"));
+        boolean internalObservedCostCited = pack.sources().stream()
+                .anyMatch(source -> source.sourceType() == SourceType.INTERNAL_TRACE
+                        && citations.contains(source.id()));
+        boolean explicitlyObservedCost = containsAny(text, "observed cost", "effective cost", "internal trace",
+                "workload cost", "cost per 1k", "cost per 1,000", "measured cost");
+        boolean publishedListPricingClaim = containsAny(text, "official pricing", "list pricing", "published pricing",
+                "current pricing", "token pricing", "price per token", "price per 1m", "price per million");
+        boolean migrationRecommendation = containsAny(text, "migration", "migrate", "recommend", "choose provider");
+        if (internalObservedCostCited && explicitlyObservedCost && !blogCited) {
+            return false;
+        }
+        return officialAvailable && !officialCited
+                && (blogCited || containsAny(text, "blog", "old blog")
+                || publishedListPricingClaim || migrationRecommendation);
     }
 
     private boolean claimsProviderBFasterDespiteTraceRisk(String answer, ResearchPack pack) {
