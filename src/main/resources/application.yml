@@ -59,11 +59,57 @@ springdoc:
 
 # ── Council Configuration ──
 council:
+  provider-mode: ${COUNCIL_PROVIDER_MODE:free_first}
+
   security:
     admin-username: ${COUNCIL_ADMIN_USERNAME:admin}
     admin-password: ${COUNCIL_ADMIN_PASSWORD:}
 
   providers:
+    # Local Ollama provider family. No API key required.
+    ollama:
+      enabled: ${OLLAMA_ENABLED:true}
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      defaults:
+        timeout-ms: ${OLLAMA_TIMEOUT_MS:60000}
+        temperature: ${OLLAMA_TEMPERATURE:0.2}
+        num-predict: ${OLLAMA_NUM_PREDICT:2048}
+        priority: ${OLLAMA_PRIORITY:20}
+        reliability: ${OLLAMA_RELIABILITY:0.72}
+      preflight:
+        enabled: ${OLLAMA_PREFLIGHT_ENABLED:false}
+        timeout-ms: ${OLLAMA_PREFLIGHT_TIMEOUT_MS:10000}
+        num-predict: ${OLLAMA_PREFLIGHT_NUM_PREDICT:8}
+      models:
+        qwen-coder:
+          enabled: ${OLLAMA_QWEN_CODER_ENABLED:true}
+          provider-id: ollama-qwen-coder
+          display-name: Ollama Qwen Coder 7B
+          model: ${OLLAMA_QWEN_CODER_MODEL:qwen2.5-coder:7b}
+          role: coding
+          timeout-ms: ${OLLAMA_QWEN_CODER_TIMEOUT_MS:60000}
+        deepseek:
+          enabled: ${OLLAMA_DEEPSEEK_ENABLED:true}
+          provider-id: ollama-deepseek
+          display-name: Ollama DeepSeek R1 8B
+          model: ${OLLAMA_DEEPSEEK_MODEL:deepseek-r1:8b}
+          role: reasoning
+          timeout-ms: ${OLLAMA_DEEPSEEK_TIMEOUT_MS:90000}
+        llama:
+          enabled: ${OLLAMA_LLAMA_ENABLED:true}
+          provider-id: ollama-llama
+          display-name: Ollama Llama 3.1 8B
+          model: ${OLLAMA_LLAMA_MODEL:llama3.1:8b}
+          role: general
+          timeout-ms: ${OLLAMA_LLAMA_TIMEOUT_MS:60000}
+        gemma:
+          enabled: ${OLLAMA_GEMMA_ENABLED:true}
+          provider-id: ollama-gemma
+          display-name: Ollama Gemma 3 4B
+          model: ${OLLAMA_GEMMA_MODEL:gemma3:4b}
+          role: summarizer
+          timeout-ms: ${OLLAMA_GEMMA_TIMEOUT_MS:45000}
+
     # Blackbox AI provider family. Each enabled logical model is registered as an independent provider.
     blackbox:
       enabled: ${BLACKBOX_ENABLED:true}
@@ -272,6 +318,9 @@ council:
     synthesis-timeout-seconds: 60
     request-timeout-seconds: 90
     per-provider-deadline-seconds: 30
+    local-only-request-timeout-seconds: ${LOCAL_ONLY_REQUEST_TIMEOUT_SECONDS:180}
+    local-only-draft-timeout-seconds: ${LOCAL_ONLY_DRAFT_TIMEOUT_SECONDS:120}
+    local-only-per-provider-deadline-seconds: ${LOCAL_ONLY_PER_PROVIDER_DEADLINE_SECONDS:90}
     early-stop-enabled: true
     early-stop-quality-threshold: 0.88
     early-stop-min-improvement: 0.06

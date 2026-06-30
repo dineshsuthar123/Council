@@ -34,7 +34,8 @@ public class CriticEngine {
      * These are tried in order if the primary critic selection fails or errors out.
      */
     private static final List<String> CRITIC_FALLBACK_CHAIN =
-            List.of("claude", "gemini", "deepseek", "mistral", "kimi");
+            List.of("ollama-deepseek", "ollama-llama", "ollama-qwen-coder",
+                    "claude", "gemini", "deepseek", "mistral", "kimi");
 
     private final ProviderRegistry registry;
     private final ProviderSelectionStrategy selectionStrategy;
@@ -80,8 +81,8 @@ public class CriticEngine {
     private Optional<LlmAdapter> selectPrimaryCritic(String traceId) {
         if (registry.isRoutingEnabled()) {
             return selectionStrategy.selectCriticProvider(
-                    registry.buildDescriptors(),
-                    registry.getAllAdapters(),
+                    registry.buildDescriptorsForCurrentMode(),
+                    registry.getAdaptersForCurrentMode(),
                     traceId);
         }
         return registry.getCriticAdapter(preferredProvider);
@@ -104,7 +105,7 @@ public class CriticEngine {
      * Walk the fallback chain, skipping the already-tried primary.
      */
     private CriticResult tryFallbackChain(CriticRequest request, String alreadyTriedProvider) {
-        Map<String, LlmAdapter> allAdapters = registry.getAllAdapters();
+        Map<String, LlmAdapter> allAdapters = registry.getAdaptersForCurrentMode();
 
         for (String fallbackName : CRITIC_FALLBACK_CHAIN) {
             if (fallbackName.equals(alreadyTriedProvider)) continue;

@@ -23,6 +23,9 @@ public class VerifierEngine {
     private static final Logger log = LoggerFactory.getLogger(VerifierEngine.class);
 
     private static final List<String> VERIFIER_PROVIDER_CHAIN = List.of(
+            "ollama-deepseek",
+            "ollama-qwen-coder",
+            "ollama-llama",
             "openrouter-qwen", // qwen-2.5-72b
             "nvidia-deepseek", // deepseek-v3.x via NVIDIA
             "deepseek",
@@ -48,7 +51,7 @@ public class VerifierEngine {
         }
 
         VerifierBatchRequest request = new VerifierBatchRequest(traceId, userQuery, drafts);
-        Map<String, LlmAdapter> adapters = registry.getAllAdapters();
+        Map<String, LlmAdapter> adapters = registry.getAdaptersForCurrentMode();
 
         for (String providerName : VERIFIER_PROVIDER_CHAIN) {
             LlmAdapter adapter = adapters.get(providerName);

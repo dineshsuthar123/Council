@@ -1,12 +1,15 @@
 package com.council.provider;
 
 import com.council.config.CouncilProperties;
+import com.council.config.ProviderMode;
 import com.council.provider.routing.ProviderConcurrencyLimiter;
 import com.council.provider.routing.ProviderDescriptor;
 import com.council.provider.routing.ProviderRole;
 import com.council.provider.blackbox.BlackboxAdapterFactory;
+import com.council.provider.ollama.OllamaAdapterFactory;
 import com.council.resilience.ProviderCircuitBreaker;
 import com.council.resilience.ProviderCooldownState;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -34,13 +37,18 @@ public class ProviderRegistry {
     private final CouncilProperties properties;
     private final ProviderConcurrencyLimiter concurrencyLimiter;
 
+    @Autowired
     public ProviderRegistry(List<LlmAdapter> adapterList,
                             ProviderCircuitBreaker circuitBreaker,
                             CouncilProperties properties,
                             ProviderConcurrencyLimiter concurrencyLimiter,
-                            BlackboxAdapterFactory blackboxAdapterFactory) {
+                            BlackboxAdapterFactory blackboxAdapterFactory,
+                            OllamaAdapterFactory ollamaAdapterFactory) {
         Map<String, LlmAdapter> registered = new LinkedHashMap<>();
         adapterList.forEach(adapter -> registerAdapter(registered, adapter));
+        if (ollamaAdapterFactory != null) {
+            ollamaAdapterFactory.adapters().forEach(adapter -> registerAdapter(registered, adapter));
+        }
         blackboxAdapterFactory.adapters().forEach(adapter -> registerAdapter(registered, adapter));
         this.adapters = Map.copyOf(registered);
         this.circuitBreaker = circuitBreaker;
@@ -54,6 +62,14 @@ public class ProviderRegistry {
         }
 
         log.info("Registered {} provider adapters: {}", adapters.size(), adapters.keySet());
+    }
+
+    public ProviderRegistry(List<LlmAdapter> adapterList,
+                            ProviderCircuitBreaker circuitBreaker,
+                            CouncilProperties properties,
+                            ProviderConcurrencyLimiter concurrencyLimiter,
+                            BlackboxAdapterFactory blackboxAdapterFactory) {
+        this(adapterList, circuitBreaker, properties, concurrencyLimiter, blackboxAdapterFactory, null);
     }
 
     private void registerAdapter(Map<String, LlmAdapter> registered, LlmAdapter adapter) {
@@ -71,6 +87,7 @@ public class ProviderRegistry {
     public List<LlmAdapter> getAvailableDraftProviders() {
         return adapters.values().stream()
                 .filter(LlmAdapter::isEnabled)
+                .filter(a -> isAllowedInCurrentMode(a.providerName()))
                 .filter(a -> !circuitBreaker.isInCooldown(a.providerName()))
                 .toList();
     }
@@ -81,6 +98,7 @@ public class ProviderRegistry {
     public Optional<LlmAdapter> getCriticAdapter(String preferredProvider) {
         LlmAdapter preferred = adapters.get(preferredProvider);
         if (preferred != null && preferred.isEnabled()
+                && isAllowedInCurrentMode(preferredProvider)
                 && !circuitBreaker.isInCooldown(preferredProvider)) {
             return Optional.of(preferred);
         }
@@ -90,11 +108,31 @@ public class ProviderRegistry {
 
     public Optional<LlmAdapter> getAdapter(String providerName) {
         return Optional.ofNullable(adapters.get(providerName))
+                .filter(adapter -> isAllowedInCurrentMode(providerName))
                 .filter(LlmAdapter::isEnabled);
     }
 
     public Map<String, LlmAdapter> getAllAdapters() {
         return Map.copyOf(adapters);
+    }
+
+    public Map<String, LlmAdapter> getAdaptersForCurrentMode() {
+        return adapters.entrySet().stream()
+                .filter(entry -> isAllowedInCurrentMode(entry.getKey()))
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        Map.Entry::getValue,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+    }
+
+    public ProviderMode providerMode() {
+        ProviderMode mode = properties.getProviderMode();
+        return mode == null ? ProviderMode.FREE_FIRST : mode;
+    }
+
+    public boolean isAllowedInCurrentMode(String providerId) {
+        return providerMode().allowsProvider(providerId);
     }
 
     /**
@@ -109,10 +147,19 @@ public class ProviderRegistry {
      * Merges static config from {@link CouncilProperties} with live circuit-breaker state.
      */
     public List<ProviderDescriptor> buildDescriptors() {
+        return buildDescriptors(false);
+    }
+
+    public List<ProviderDescriptor> buildDescriptorsForCurrentMode() {
+        return buildDescriptors(true);
+    }
+
+    private List<ProviderDescriptor> buildDescriptors(boolean currentModeOnly) {
         CouncilProperties.RoutingConfig routing = properties.getRouting();
         Map<String, CouncilProperties.ProviderRouteConfig> routes = routing.getProviderRoutes();
 
         return adapters.entrySet().stream()
+                .filter(entry -> !currentModeOnly || isAllowedInCurrentMode(entry.getKey()))
                 .map(entry -> {
                     String name = entry.getKey();
                     LlmAdapter adapter = entry.getValue();

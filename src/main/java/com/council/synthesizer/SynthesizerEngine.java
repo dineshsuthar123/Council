@@ -22,6 +22,7 @@ public class SynthesizerEngine {
     private static final Logger log = LoggerFactory.getLogger(SynthesizerEngine.class);
 
     private static final List<String> SYNTHESIS_FALLBACK_CHAIN = List.of(
+            "ollama-deepseek", "ollama-llama", "ollama-qwen-coder", "ollama-gemma",
             "openrouter", "claude", "gemini", "deepseek", "mistral", "kimi", "nvidia"
     );
 
@@ -67,7 +68,7 @@ public class SynthesizerEngine {
     }
 
     private SynthesisResult tryFallbackChain(SynthesisRequest request, String alreadyTriedProvider) {
-        Map<String, LlmAdapter> allAdapters = registry.getAllAdapters();
+        Map<String, LlmAdapter> allAdapters = registry.getAdaptersForCurrentMode();
 
         for (String fallbackName : SYNTHESIS_FALLBACK_CHAIN) {
             if (fallbackName.equals(alreadyTriedProvider)) {

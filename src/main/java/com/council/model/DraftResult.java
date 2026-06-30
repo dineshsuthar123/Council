@@ -86,6 +86,8 @@ public record DraftResult(
         return switch (failureDetails.failureCategory()) {
             case DISABLED -> ProviderOutcomeStatus.SKIPPED_DISABLED;
             case API_KEY_MISSING -> ProviderOutcomeStatus.UNAVAILABLE_API_KEY_MISSING;
+            case OLLAMA_NOT_RUNNING -> ProviderOutcomeStatus.UNAVAILABLE_LOCAL_RUNTIME;
+            case MODEL_NOT_INSTALLED -> ProviderOutcomeStatus.UNAVAILABLE_LOCAL_MODEL;
             case CIRCUIT_OPEN -> ProviderOutcomeStatus.SKIPPED_CIRCUIT_OPEN;
             default -> ProviderOutcomeStatus.FAILED;
         };

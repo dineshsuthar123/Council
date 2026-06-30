@@ -15,6 +15,7 @@ import java.util.Map;
 public class CouncilProperties {
 
     private Map<String, ProviderConfig> providers = new HashMap<>();
+    private ProviderMode providerMode = ProviderMode.FREE_FIRST;
     private CriticConfig critic = new CriticConfig();
     private SynthesizerConfig synthesizer = new SynthesizerConfig();
     private OrchestratorConfig orchestrator = new OrchestratorConfig();
@@ -25,6 +26,8 @@ public class CouncilProperties {
 
     public Map<String, ProviderConfig> getProviders() { return providers; }
     public void setProviders(Map<String, ProviderConfig> providers) { this.providers = providers; }
+    public ProviderMode getProviderMode() { return ProviderMode.safe(providerMode); }
+    public void setProviderMode(ProviderMode providerMode) { this.providerMode = ProviderMode.safe(providerMode); }
     public CriticConfig getCritic() { return critic; }
     public void setCritic(CriticConfig critic) { this.critic = critic; }
     public SynthesizerConfig getSynthesizer() { return synthesizer; }
@@ -103,6 +106,9 @@ public class CouncilProperties {
         private int synthesisTimeoutSeconds = 60;
         private int requestTimeoutSeconds = 90;
         private int perProviderDeadlineSeconds = 30;
+        private int localOnlyRequestTimeoutSeconds = 180;
+        private int localOnlyDraftTimeoutSeconds = 120;
+        private int localOnlyPerProviderDeadlineSeconds = 90;
         private boolean earlyStopEnabled = false;
         private double earlyStopQualityThreshold = 0.88;
         private double earlyStopMinImprovement = 0.06;
@@ -126,6 +132,12 @@ public class CouncilProperties {
         public void setRequestTimeoutSeconds(int requestTimeoutSeconds) { this.requestTimeoutSeconds = requestTimeoutSeconds; }
         public int getPerProviderDeadlineSeconds() { return perProviderDeadlineSeconds; }
         public void setPerProviderDeadlineSeconds(int perProviderDeadlineSeconds) { this.perProviderDeadlineSeconds = perProviderDeadlineSeconds; }
+        public int getLocalOnlyRequestTimeoutSeconds() { return localOnlyRequestTimeoutSeconds; }
+        public void setLocalOnlyRequestTimeoutSeconds(int localOnlyRequestTimeoutSeconds) { this.localOnlyRequestTimeoutSeconds = localOnlyRequestTimeoutSeconds; }
+        public int getLocalOnlyDraftTimeoutSeconds() { return localOnlyDraftTimeoutSeconds; }
+        public void setLocalOnlyDraftTimeoutSeconds(int localOnlyDraftTimeoutSeconds) { this.localOnlyDraftTimeoutSeconds = localOnlyDraftTimeoutSeconds; }
+        public int getLocalOnlyPerProviderDeadlineSeconds() { return localOnlyPerProviderDeadlineSeconds; }
+        public void setLocalOnlyPerProviderDeadlineSeconds(int localOnlyPerProviderDeadlineSeconds) { this.localOnlyPerProviderDeadlineSeconds = localOnlyPerProviderDeadlineSeconds; }
         public boolean isEarlyStopEnabled() { return earlyStopEnabled; }
         public void setEarlyStopEnabled(boolean earlyStopEnabled) { this.earlyStopEnabled = earlyStopEnabled; }
         public double getEarlyStopQualityThreshold() { return earlyStopQualityThreshold; }

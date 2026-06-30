@@ -7,6 +7,8 @@ package com.council.common.exception;
 public enum ProviderFailureCategory {
     DISABLED(false),
     API_KEY_MISSING(false),
+    OLLAMA_NOT_RUNNING(true),
+    MODEL_NOT_INSTALLED(false),
     AUTH_FAILED(false),
     MODEL_NOT_FOUND_OR_UNAVAILABLE(false),
     RATE_LIMITED(true),
