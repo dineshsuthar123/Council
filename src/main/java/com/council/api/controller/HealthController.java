@@ -4,6 +4,7 @@ import com.council.api.dto.ErrorResponse;
 import com.council.api.dto.ProviderStatusResponse;
 import com.council.api.dto.ProviderScorecardResponse;
 import com.council.config.CouncilProperties;
+import com.council.config.ProviderMode;
 import com.council.metrics.ProviderScorecardService;
 import com.council.provider.LlmAdapter;
 import com.council.provider.ProviderPreflightAware;
@@ -175,7 +176,15 @@ public class HealthController {
         body.put("routingEnabled", registry.isRoutingEnabled());
         body.put("research", researchAvailability());
         body.put("blackbox", blackboxAvailability());
-        body.put("ollama", ollamaAvailability());
+        Map<String, Object> ollamaMap = ollamaAvailability();
+        body.put("ollama", ollamaMap);
+
+        if (available.isEmpty() && properties.getProviderMode() == ProviderMode.LOCAL_ONLY) {
+            String degradedReason = buildLocalOnlyDegradedReason(ollamaMap);
+            if (degradedReason != null) {
+                body.put("degradedReason", degradedReason);
+            }
+        }
 
         Map<String, Object> cooldowns = new LinkedHashMap<>();
         circuitBreaker.getAllStates().forEach((name, state) -> {
@@ -249,6 +258,39 @@ public class HealthController {
             providers.put(providerId, provider);
         });
         return providers;
+    }
+
+    private String buildLocalOnlyDegradedReason(Map<String, Object> ollamaProviders) {
+        if (ollamaProviders.isEmpty()) {
+            return "Provider mode is LOCAL_ONLY but no local (ollama-*) providers are configured. " +
+                    "Enable Ollama (council.providers.ollama.enabled=true) and add models, or change providerMode.";
+        }
+        for (Map.Entry<String, Object> entry : ollamaProviders.entrySet()) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> provider = (Map<String, Object>) entry.getValue();
+            Boolean enabled = (Boolean) provider.get("enabled");
+            Boolean available = (Boolean) provider.get("available");
+            Boolean modelInstalled = (Boolean) provider.get("modelInstalled");
+            String failureReason = (String) provider.get("failureReason");
+            String remediation = (String) provider.get("remediation");
+            String model = (String) provider.get("model");
+            if (Boolean.TRUE.equals(enabled) && !Boolean.TRUE.equals(available)) {
+                if (Boolean.FALSE.equals(modelInstalled)) {
+                    return "Provider mode is LOCAL_ONLY but configured Ollama model '" + model +
+                            "' is not installed. Run: ollama pull " + model;
+                }
+                if (failureReason != null) {
+                    String msg = "Provider mode is LOCAL_ONLY but Ollama provider '" + entry.getKey() +
+                            "' is unavailable: " + failureReason;
+                    if (remediation != null) {
+                        msg += ". " + remediation;
+                    }
+                    return msg;
+                }
+            }
+        }
+        return "Provider mode is LOCAL_ONLY but all local (ollama-*) providers are disabled. " +
+                "Enable at least one Ollama model configuration.";
     }
 
     private ProviderStatusDetails providerStatusDetails(LlmAdapter adapter, boolean refreshPreflight) {
