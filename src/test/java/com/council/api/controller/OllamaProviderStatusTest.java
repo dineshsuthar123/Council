@@ -98,11 +98,111 @@ class OllamaProviderStatusTest {
 
         Map<String, Object> health = controller.health().getBody();
         assertEquals("local_only", health.get("providerMode"));
+        assertNull(health.get("degradedReason"));
         @SuppressWarnings("unchecked")
         Map<String, Object> healthOllama = (Map<String, Object>) health.get("ollama");
         assertTrue(healthOllama.containsKey("ollama-qwen-coder"));
         String payload = mapper.writeValueAsString(statuses);
         assertFalse(payload.contains("apiKey"));
+    }
+
+    @Test
+    void healthShowsDegradedReasonWhenLocalOnlyAndOllamaDisabled() throws Exception {
+        CouncilProperties properties = new CouncilProperties();
+        properties.setProviderMode(ProviderMode.LOCAL_ONLY);
+        properties.setProviders(new HashMap<>());
+        properties.getRouting().setEnabled(true);
+        properties.getRouting().setProviderRoutes(new HashMap<>());
+
+        OllamaProviderProperties ollama = new OllamaProviderProperties();
+        ollama.setEnabled(false);
+        ollama.setBaseUrl("http://127.0.0.1:9999");
+        ollama.setModels(Map.of(
+                "qwen", model("ollama-qwen-coder", "Ollama Qwen", "qwen2.5-coder:7b")
+        ));
+
+        OrchestrationMetrics metrics = new OrchestrationMetrics(new SimpleMeterRegistry());
+        ProviderCircuitBreaker breaker = new ProviderCircuitBreaker(properties, metrics);
+        ProviderCallExecutor executor = new ProviderCallExecutor(breaker, metrics, properties);
+        ObjectMapper mapper = new ObjectMapper();
+        RestClientFactory restClientFactory = new RestClientFactory();
+        OllamaAdapterFactory ollamaFactory = new OllamaAdapterFactory(ollama, properties, mapper,
+                mock(JsonResponseNormalizer.class), mock(ResponseMapper.class), executor, metrics,
+                restClientFactory, new OllamaModelAvailabilityService(ollama, mapper, restClientFactory));
+        BlackboxAdapterFactory blackboxFactory = new BlackboxAdapterFactory(new BlackboxProviderProperties(),
+                properties, mapper, mock(JsonResponseNormalizer.class), mock(ResponseMapper.class), executor,
+                metrics, mock(RestClientFactory.class));
+        ProviderRegistry registry = new ProviderRegistry(List.of(), breaker, properties,
+                new ProviderConcurrencyLimiter(), blackboxFactory, ollamaFactory);
+        HealthController controller = new HealthController(registry, breaker, new ProviderConcurrencyLimiter(),
+                mock(ProviderScorecardService.class), properties);
+
+        Map<String, Object> health = controller.health().getBody();
+        assertEquals("local_only", health.get("providerMode"));
+        assertEquals("DEGRADED", health.get("status"));
+        assertTrue(health.containsKey("degradedReason"));
+        String reason = (String) health.get("degradedReason");
+        assertNotNull(reason);
+        assertTrue(reason.contains("no local (ollama-*) providers are configured"));
+    }
+
+    @Test
+    void healthShowsDegradedReasonWhenLocalOnlyAndAllOllamaModelsUnavailable() throws Exception {
+        String baseUrl = startTagsServer("""
+                {"models":[]}
+                """);
+        CouncilProperties properties = new CouncilProperties();
+        properties.setProviderMode(ProviderMode.LOCAL_ONLY);
+        properties.setProviders(new HashMap<>());
+        properties.getRouting().setEnabled(true);
+        properties.getRouting().setProviderRoutes(new HashMap<>());
+
+        OllamaProviderProperties ollama = new OllamaProviderProperties();
+        ollama.setBaseUrl(baseUrl);
+        ollama.setModels(Map.of(
+                "qwen", model("ollama-qwen-coder", "Ollama Qwen", "qwen2.5-coder:7b"),
+                "deepseek", model("ollama-deepseek", "Ollama DeepSeek", "deepseek-r1:8b")
+        ));
+
+        OrchestrationMetrics metrics = new OrchestrationMetrics(new SimpleMeterRegistry());
+        ProviderCircuitBreaker breaker = new ProviderCircuitBreaker(properties, metrics);
+        ProviderCallExecutor executor = new ProviderCallExecutor(breaker, metrics, properties);
+        ObjectMapper mapper = new ObjectMapper();
+        RestClientFactory restClientFactory = new RestClientFactory();
+        OllamaAdapterFactory ollamaFactory = new OllamaAdapterFactory(ollama, properties, mapper,
+                mock(JsonResponseNormalizer.class), mock(ResponseMapper.class), executor, metrics,
+                restClientFactory, new OllamaModelAvailabilityService(ollama, mapper, restClientFactory));
+        BlackboxAdapterFactory blackboxFactory = new BlackboxAdapterFactory(new BlackboxProviderProperties(),
+                properties, mapper, mock(JsonResponseNormalizer.class), mock(ResponseMapper.class), executor,
+                metrics, mock(RestClientFactory.class));
+        ProviderRegistry registry = new ProviderRegistry(List.of(), breaker, properties,
+                new ProviderConcurrencyLimiter(), blackboxFactory, ollamaFactory);
+        HealthController controller = new HealthController(registry, breaker, new ProviderConcurrencyLimiter(),
+                mock(ProviderScorecardService.class), properties);
+
+        Map<String, Object> health = controller.health().getBody();
+        assertEquals("local_only", health.get("providerMode"));
+        assertEquals("UP", health.get("status"));
+        assertNull(health.get("degradedReason"));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> healthOllama = (Map<String, Object>) health.get("ollama");
+        assertTrue(healthOllama.containsKey("ollama-qwen-coder"));
+        assertTrue(healthOllama.containsKey("ollama-deepseek"));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> qwenStatus = (Map<String, Object>) healthOllama.get("ollama-qwen-coder");
+        assertEquals(false, qwenStatus.get("available"));
+        assertEquals(false, qwenStatus.get("modelInstalled"));
+        assertEquals("MODEL_NOT_INSTALLED", qwenStatus.get("failureReason"));
+        assertEquals("ollama pull qwen2.5-coder:7b", qwenStatus.get("remediation"));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> deepseekStatus = (Map<String, Object>) healthOllama.get("ollama-deepseek");
+        assertEquals(false, deepseekStatus.get("available"));
+        assertEquals(false, deepseekStatus.get("modelInstalled"));
+        assertEquals("MODEL_NOT_INSTALLED", deepseekStatus.get("failureReason"));
+        assertEquals("ollama pull deepseek-r1:8b", deepseekStatus.get("remediation"));
     }
 
     private OllamaProviderProperties.ModelConfig model(String providerId, String displayName, String model) {
